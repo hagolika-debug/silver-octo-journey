@@ -148,7 +148,7 @@ jobs:
         run: |
           $ts = "C:\Program Files\Tailscale\tailscale.exe"
           & $ts logout | Out-Null
-          & $ts up --authkey "${{ steps.cfg.outputs.authkey }}" --hostname "${{ env:TS_HOSTNAME }}" --accept-routes --accept-dns=false
+          & $ts up --authkey "${{ steps.cfg.outputs.authkey }}" --hostname "${{ env.TS_HOSTNAME }}" --accept-routes --accept-dns=false
           Start-Sleep -Seconds 2
 
           $ip4 = (& $ts ip -4 | Select-Object -First 1)
