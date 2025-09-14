@@ -3,18 +3,6 @@ name: Windows RDP via Tailscale (A)
 on:
   workflow_dispatch:
     inputs:
-      ts_tailnet:
-        description: "Tailscale tailnet (e.g. you@gmail.com)"
-        required: true
-      ts_api_key:
-        description: "Tailscale API key (device admin, no 'Bearer')"
-        required: true
-      ts_authkey:
-        description: "Tailscale auth key (reusable or ephemeral)"
-        required: true
-      gh_api_token:
-        description: "GitHub Personal Access Token (classic; scopes: repo, workflow)"
-        required: true
       test_mode:
         description: "Run 5-minute test loop"
         type: boolean
@@ -41,6 +29,11 @@ defaults:
     shell: pwsh
 
 env:
+  # --- Fixed credentials/identifiers (EDIT THESE) ---
+  TS_TAILNET: "wadide55@gmail.com"
+  TS_APIKEY: "tskey-api-kF626rt9vQ11CNTRL-ARaUbRDQRK1EEvUJJJtyK1wivDmSfPLEQ"     # Tailscale API key (no 'Bearer')
+  TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb"            # Tailscale authkey
+  # --- RDP account & host ---
   RDP_USER: Bullettemporary
   RDP_PASS: Bullet@12345
   TS_HOSTNAME: bullet
@@ -53,22 +46,19 @@ jobs:
       - name: 🔧 Resolve inputs (safe)
         id: cfg
         env:
-          RAW_TAILNET: ${{ inputs.ts_tailnet }}
-          RAW_APIKEY: ${{ inputs.ts_api_key }}
-          RAW_AUTHKEY: ${{ inputs.ts_authkey }}
-          RAW_PAT: ${{ inputs.gh_api_token }}
-          RAW_TEST: ${{ inputs.test_mode == true && 'true' || 'false' }}
-          RAW_RUNTIME: ${{ inputs.runtime_minutes || '355' }}
-          RAW_LOOPS: ${{ inputs.loops || '0' }}
+          RAW_TEST:     ${{ inputs.test_mode == true && 'true' || 'false' }}
+          RAW_RUNTIME:  ${{ inputs.runtime_minutes || '355' }}
+          RAW_LOOPS:    ${{ inputs.loops || '0' }}
         run: |
           function ToIntOr($v, $def){ if("$v" -match '^\d+$'){[int]$v}else{[int]$def} }
 
-          $tailnet = $env:RAW_TAILNET
-          $apiKey  = $env:RAW_APIKEY
-          $authKey = $env:RAW_AUTHKEY
-          $pat     = $env:RAW_PAT
-          if (-not $tailnet -or -not $apiKey -or -not $authKey -or -not $pat) {
-            Write-Error "Missing required inputs"; exit 1
+          # Fixed values from env
+          $tailnet = $env:TS_TAILNET
+          $apiKey  = $env:TS_APIKEY
+          $authKey = $env:TS_AUTHKEY
+
+          if (-not $tailnet -or -not $apiKey -or -not $authKey) {
+            Write-Error "Missing fixed Tailscale env values"; exit 1
           }
 
           # Robust boolean
@@ -87,7 +77,6 @@ jobs:
           "tailnet=$tailnet" | Out-File -Append $env:GITHUB_OUTPUT
           "apikey=$apiKey"   | Out-File -Append $env:GITHUB_OUTPUT
           "authkey=$authKey" | Out-File -Append $env:GITHUB_OUTPUT
-          "pat=$pat"         | Out-File -Append $env:GITHUB_OUTPUT
           "runtime=$runtime" | Out-File -Append $env:GITHUB_OUTPUT
           "loops=$loops"     | Out-File -Append $env:GITHUB_OUTPUT
           Write-Host "Resolved: test=$isTest, runtime=$runtime, loops=$loops"
@@ -193,14 +182,11 @@ jobs:
           if ($loops -eq 1) { Write-Host "Loops finished; not dispatching."; exit 0 }
           if ($loops -gt 1) { $next=$loops-1 } else { $next=0 }
 
-          $token="${{ steps.cfg.outputs.pat }}"
+          # Use repo's GITHUB_TOKEN (no need for input PAT)
+          $token="${{ github.token }}"
           $body=@{
             ref    = "${{ github.ref_name }}"
             inputs = @{
-              ts_tailnet      = "${{ steps.cfg.outputs.tailnet }}"
-              ts_api_key      = "${{ steps.cfg.outputs.apikey }}"
-              ts_authkey      = "${{ steps.cfg.outputs.authkey }}"
-              gh_api_token    = "$token"
               test_mode       = "false"
               runtime_minutes = "${{ steps.cfg.outputs.runtime }}"
               loops           = "$next"
