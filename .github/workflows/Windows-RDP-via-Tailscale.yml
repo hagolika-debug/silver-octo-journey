@@ -1,4 +1,4 @@
-name: Windows RDP via Tailscale (A)
+name: Windows RDP via Tailscale
 
 on:
   workflow_dispatch:
@@ -143,7 +143,7 @@ jobs:
           "fqdn=$fqdn" | Out-File -Append $env:GITHUB_OUTPUT
           "derp=$derp" | Out-File -Append $env:GITHUB_OUTPUT
 
-          "### RDP (A)`nHost: $env:TS_HOSTNAME`nIPv4: $ip4`nMagicDNS: $fqdn`nDERP: $derp`nUser: $env:RDP_USER`nPass: $env:RDP_PASS" | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          "### RDP`nHost: $env:TS_HOSTNAME`nIPv4: $ip4`nMagicDNS: $fqdn`nDERP: $derp`nUser: $env:RDP_USER`nPass: $env:RDP_PASS" | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       - name: ⏳ Keep alive
         run: |
@@ -175,7 +175,7 @@ jobs:
             }
           } catch { Write-Warning "Exit purge failed: $_" }
 
-      - name: 🔁 Dispatch workflow B (instant, forever by default)
+      - name: 🔁 Restart workflow (self-dispatch)
         if: always()
         run: |
           $loops=[int]"${{ steps.cfg.outputs.loops }}"
@@ -194,6 +194,6 @@ jobs:
           } | ConvertTo-Json -Depth 5
 
           Invoke-RestMethod -Method POST `
-            -Uri "https://api.github.com/repos/${{ github.repository }}/actions/workflows/Windows-RDP-via-Tailscale-B.yml/dispatches" `
+            -Uri "https://api.github.com/repos/${{ github.repository }}/actions/workflows/Windows-RDP-via-Tailscale.yml/dispatches" `
             -Headers @{ Authorization = "Bearer $token"; "Accept"="application/vnd.github+json" } `
             -Body $body
