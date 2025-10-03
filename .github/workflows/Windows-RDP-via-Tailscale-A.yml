@@ -1,4 +1,4 @@
-name: Windows RDP via Tailscale (A)
+name: macOS VNC via Tailscale (A)
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ on:
         default: "0"
 
 concurrency:
-  group: tailscale-rdp-singleton
+  group: tailscale-vnc-singleton
   cancel-in-progress: false
 
 permissions:
@@ -26,174 +26,241 @@ permissions:
 
 defaults:
   run:
-    shell: pwsh
+    shell: bash
 
 env:
   # --- Fixed credentials/identifiers (EDIT THESE) ---
   TS_TAILNET: "wadide55@gmail.com"
-  TS_APIKEY: "tskey-api-kF626rt9vQ11CNTRL-ARaUbRDQRK1EEvUJJJtyK1wivDmSfPLEQ"     # Tailscale API key (no 'Bearer')
-  TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb"            # Tailscale authkey
-  # --- RDP account & host ---
-  RDP_USER: Bullettemporary
-  RDP_PASS: Bullet@12345
+  TS_APIKEY: "tskey-api-kF626rt9vQ11CNTRL-ARaUbRDQRK1EEvUJJJtyK1wivDmSfPLEQ"
+  TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb"
+  # --- VNC credentials & hostname ---
+  VNC_USER: bullettemporary
+  VNC_PASS: Bullet@12345
   TS_HOSTNAME: bullet
 
 jobs:
-  rdp:
-    runs-on: windows-2022
+  vnc:
+    runs-on: macos-latest
     timeout-minutes: 370
     steps:
       - name: 🔧 Resolve inputs (safe)
         id: cfg
         env:
-          RAW_TEST:     ${{ inputs.test_mode == true && 'true' || 'false' }}
-          RAW_RUNTIME:  ${{ inputs.runtime_minutes || '355' }}
-          RAW_LOOPS:    ${{ inputs.loops || '0' }}
+          RAW_TEST: ${{ inputs.test_mode == true && 'true' || 'false' }}
+          RAW_RUNTIME: ${{ inputs.runtime_minutes || '355' }}
+          RAW_LOOPS: ${{ inputs.loops || '0' }}
         run: |
-          function ToIntOr($v, $def){ if("$v" -match '^\d+$'){[int]$v}else{[int]$def} }
+          # Helper function to parse integers
+          to_int_or() {
+            local val="$1"
+            local def="$2"
+            if [[ "$val" =~ ^[0-9]+$ ]]; then
+              echo "$val"
+            else
+              echo "$def"
+            fi
+          }
 
           # Fixed values from env
-          $tailnet = $env:TS_TAILNET
-          $apiKey  = $env:TS_APIKEY
-          $authKey = $env:TS_AUTHKEY
+          tailnet="$TS_TAILNET"
+          apikey="$TS_APIKEY"
+          authkey="$TS_AUTHKEY"
 
-          if (-not $tailnet -or -not $apiKey -or -not $authKey) {
-            Write-Error "Missing fixed Tailscale env values"; exit 1
-          }
+          if [[ -z "$tailnet" || -z "$apikey" || -z "$authkey" ]]; then
+            echo "Error: Missing fixed Tailscale env values" >&2
+            exit 1
+          fi
 
-          # Robust boolean
-          $isTest = ($env:RAW_TEST -match '^(?i:true|1|yes|on)$')
+          # Parse test mode
+          is_test=false
+          if [[ "$RAW_TEST" =~ ^(true|1|yes|on)$ ]]; then
+            is_test=true
+          fi
 
-          $runtime = ToIntOr $env:RAW_RUNTIME 355
-          if ($isTest) { $runtime = 5 }
+          # Parse runtime
+          runtime=$(to_int_or "$RAW_RUNTIME" 355)
+          if [[ "$is_test" == "true" ]]; then
+            runtime=5
+          fi
 
           # Ensure ~6h (355) when test_mode is off and value is too small
-          if (-not $isTest -and $runtime -lt 6) { $runtime = 355 }
-          if ($runtime -gt 360) { $runtime = 355 }
+          if [[ "$is_test" == "false" && $runtime -lt 6 ]]; then
+            runtime=355
+          fi
+          if [[ $runtime -gt 360 ]]; then
+            runtime=355
+          fi
 
-          $loops = ToIntOr $env:RAW_LOOPS 0
-          if ($loops -lt 0) { $loops = 0 }
+          # Parse loops
+          loops=$(to_int_or "$RAW_LOOPS" 0)
+          if [[ $loops -lt 0 ]]; then
+            loops=0
+          fi
 
-          "tailnet=$tailnet" | Out-File -Append $env:GITHUB_OUTPUT
-          "apikey=$apiKey"   | Out-File -Append $env:GITHUB_OUTPUT
-          "authkey=$authKey" | Out-File -Append $env:GITHUB_OUTPUT
-          "runtime=$runtime" | Out-File -Append $env:GITHUB_OUTPUT
-          "loops=$loops"     | Out-File -Append $env:GITHUB_OUTPUT
-          Write-Host "Resolved: test=$isTest, runtime=$runtime, loops=$loops"
+          echo "tailnet=$tailnet" >> $GITHUB_OUTPUT
+          echo "apikey=$apikey" >> $GITHUB_OUTPUT
+          echo "authkey=$authkey" >> $GITHUB_OUTPUT
+          echo "runtime=$runtime" >> $GITHUB_OUTPUT
+          echo "loops=$loops" >> $GITHUB_OUTPUT
+          echo "Resolved: test=$is_test, runtime=$runtime, loops=$loops"
 
-      - name: ⚙️ Install Tailscale (if missing) & show version
+      - name: ⚙️ Install Tailscale & show version
         run: |
-          $exe = "C:\Program Files\Tailscale\tailscale.exe"
-          if (-not (Test-Path $exe)) {
-            $url = 'https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe'
-            $dst = "$env:TEMP\tailscale-setup.exe"
-            Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
-            Start-Process -FilePath $dst -ArgumentList "/quiet" -Wait
-          }
-          Start-Service Tailscale -ErrorAction SilentlyContinue
-          & "C:\Program Files\Tailscale\tailscale.exe" version
+          # Download and install Tailscale for macOS
+          curl -o /tmp/tailscale.pkg https://pkgs.tailscale.com/stable/Tailscale-latest.pkg
+          sudo installer -pkg /tmp/tailscale.pkg -target /
+          
+          # Start Tailscale daemon
+          sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up --reset || true
+          
+          # Show version
+          /Applications/Tailscale.app/Contents/MacOS/Tailscale version || true
 
-      - name: 🔐 Enable RDP user + firewall
+      - name: 🔐 Enable VNC (Screen Sharing) & create user
         run: |
-          $u="${{ env.RDP_USER }}"; $p="${{ env.RDP_PASS }}"
-          $sec = ConvertTo-SecureString $p -AsPlainText -Force
-          if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name $u -Password $sec -AccountNeverExpires
-            Add-LocalGroupMember -Group Administrators -Member $u
-            Add-LocalGroupMember -Group "Remote Desktop Users" -Member $u
-          } else {
-            Set-LocalUser -Name $u -Password $sec -AccountNeverExpires
-            Enable-LocalUser -Name $u
-          }
-          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
+          username="$VNC_USER"
+          password="$VNC_PASS"
+
+          # Create user if doesn't exist
+          if ! dscl . -read /Users/$username &>/dev/null; then
+            # Find next available UID
+            max_uid=$(dscl . -list /Users UniqueID | awk '{print $2}' | sort -n | tail -1)
+            new_uid=$((max_uid + 1))
+            
+            sudo dscl . -create /Users/$username
+            sudo dscl . -create /Users/$username UserShell /bin/bash
+            sudo dscl . -create /Users/$username RealName "Bullet Temporary"
+            sudo dscl . -create /Users/$username UniqueID $new_uid
+            sudo dscl . -create /Users/$username PrimaryGroupID 20
+            sudo dscl . -create /Users/$username NFSHomeDirectory /Users/$username
+            sudo dscl . -passwd /Users/$username "$password"
+            
+            # Create home directory
+            sudo createhomedir -c -u $username
+            
+            # Add to admin group
+            sudo dscl . -append /Groups/admin GroupMembership $username
+          else
+            # Update password if user exists
+            sudo dscl . -passwd /Users/$username "$password"
+          fi
+
+          # Enable Screen Sharing (VNC)
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -clientopts -setvnclegacy -vnclegacy yes \
+            -clientopts -setvncpw -vncpw "$password" \
+            -restart -agent -privs -all
+
+          # Enable remote management for user
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -users $username -access -on -privs -all
+
+          echo "VNC enabled for user: $username"
 
       - name: 🧹 PURGE any devices containing 'bullet' (startup)
         run: |
-          $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
-          $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
-          $match = { param($d)
-            ($d.name -match '(?i)bullet') -or ($d.hostname -match '(?i)bullet') -or ($d.DNSName -match '(?i)bullet')
-          }
-          try {
-            $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
-            foreach ($d in $resp.devices) {
-              if (& $match $d) {
-                try {
-                  Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/device/{0}" -f $d.id) | Out-Null
-                  Write-Host "Deleted at start: $($d.name)"
-                } catch {}
-              }
-            }
-          } catch { Write-Warning "Startup purge failed: $_" }
+          tailnet_encoded=$(printf %s "${{ steps.cfg.outputs.tailnet }}" | jq -sRr @uri)
+          
+          response=$(curl -s -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+            "https://api.tailscale.com/api/v2/tailnet/$tailnet_encoded/devices" || echo '{"devices":[]}')
+          
+          echo "$response" | jq -r '.devices[] | select(.name, .hostname, .dnsName | test("bullet"; "i")) | .id' | while read -r device_id; do
+            if [[ -n "$device_id" ]]; then
+              curl -s -X DELETE \
+                -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+                "https://api.tailscale.com/api/v2/device/$device_id" || true
+              echo "Deleted at start: $device_id"
+            fi
+          done
 
       - name: 🔗 Tailscale up (hostname=bullet) + show IP/FQDN/DERP
         id: up
         run: |
-          $ts = "C:\Program Files\Tailscale\tailscale.exe"
-          & $ts logout | Out-Null
-          & $ts up --authkey "${{ steps.cfg.outputs.authkey }}" --hostname "${{ env.TS_HOSTNAME }}" --accept-routes --accept-dns=false
-          Start-Sleep -Seconds 2
+          ts="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+          
+          # Logout first
+          sudo $ts logout || true
+          
+          # Connect with authkey
+          sudo $ts up \
+            --authkey "${{ steps.cfg.outputs.authkey }}" \
+            --hostname "$TS_HOSTNAME" \
+            --accept-routes \
+            --accept-dns=false
+          
+          sleep 3
 
-          $ip4 = (& $ts ip -4 | Select-Object -First 1)
-          $status = & $ts status --json | ConvertFrom-Json
-          $fqdn = $status.Self.DNSName
-          $derp = $status.Self.DERP
-          "ip4=$ip4"   | Out-File -Append $env:GITHUB_OUTPUT
-          "fqdn=$fqdn" | Out-File -Append $env:GITHUB_OUTPUT
-          "derp=$derp" | Out-File -Append $env:GITHUB_OUTPUT
+          # Get IP and status
+          ip4=$(sudo $ts ip -4 | head -n1)
+          status_json=$(sudo $ts status --json)
+          
+          fqdn=$(echo "$status_json" | jq -r '.Self.DNSName // "N/A"')
+          derp=$(echo "$status_json" | jq -r '.Self.DERP // "N/A"')
+          
+          echo "ip4=$ip4" >> $GITHUB_OUTPUT
+          echo "fqdn=$fqdn" >> $GITHUB_OUTPUT
+          echo "derp=$derp" >> $GITHUB_OUTPUT
 
-          "### RDP (A)`nHost: $env:TS_HOSTNAME`nIPv4: $ip4`nMagicDNS: $fqdn`nDERP: $derp`nUser: $env:RDP_USER`nPass: $env:RDP_PASS" | Out-File $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          # Write summary
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ### VNC (A)
+          Host: $TS_HOSTNAME
+          IPv4: $ip4
+          MagicDNS: $fqdn
+          DERP: $derp
+          User: $VNC_USER
+          Pass: $VNC_PASS
+          VNC Port: 5900
+          EOF
 
       - name: ⏳ Keep alive
         run: |
-          $mins=[int]"${{ steps.cfg.outputs.runtime }}"
-          $end=(Get-Date).AddMinutes($mins)
-          while((Get-Date) -lt $end){
-            $left=[int]([math]::Ceiling(($end-(Get-Date)).TotalMinutes))
-            Write-Host "RDP alive... ($left min left)"
-            Start-Sleep -Seconds 60
-          }
+          mins=${{ steps.cfg.outputs.runtime }}
+          end_time=$(($(date +%s) + mins * 60))
+          
+          while [[ $(date +%s) -lt $end_time ]]; do
+            left=$(( (end_time - $(date +%s)) / 60 ))
+            echo "VNC alive... ($left min left)"
+            sleep 60
+          done
 
       - name: 🧹 PURGE any devices containing 'bullet' (exit)
         if: always()
         run: |
-          $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
-          $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
-          $match = { param($d)
-            ($d.name -match '(?i)bullet') -or ($d.hostname -match '(?i)bullet') -or ($d.DNSName -match '(?i)bullet')
-          }
-          try {
-            $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
-            foreach ($d in $resp.devices) {
-              if (& $match $d) {
-                try {
-                  Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/device/{0}" -f $d.id) | Out-Null
-                  Write-Host "Deleted at exit: $($d.name)"
-                } catch {}
-              }
-            }
-          } catch { Write-Warning "Exit purge failed: $_" }
+          tailnet_encoded=$(printf %s "${{ steps.cfg.outputs.tailnet }}" | jq -sRr @uri)
+          
+          response=$(curl -s -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+            "https://api.tailscale.com/api/v2/tailnet/$tailnet_encoded/devices" || echo '{"devices":[]}')
+          
+          echo "$response" | jq -r '.devices[] | select(.name, .hostname, .dnsName | test("bullet"; "i")) | .id' | while read -r device_id; do
+            if [[ -n "$device_id" ]]; then
+              curl -s -X DELETE \
+                -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+                "https://api.tailscale.com/api/v2/device/$device_id" || true
+              echo "Deleted at exit: $device_id"
+            fi
+          done
 
-      - name: 🔁 Dispatch workflow B (instant, forever by default)
+      - name: 🔄 Dispatch workflow B (instant, forever by default)
         if: always()
         run: |
-          $loops=[int]"${{ steps.cfg.outputs.loops }}"
-          if ($loops -eq 1) { Write-Host "Loops finished; not dispatching."; exit 0 }
-          if ($loops -gt 1) { $next=$loops-1 } else { $next=0 }
+          loops=${{ steps.cfg.outputs.loops }}
+          
+          if [[ $loops -eq 1 ]]; then
+            echo "Loops finished; not dispatching."
+            exit 0
+          fi
+          
+          if [[ $loops -gt 1 ]]; then
+            next=$((loops - 1))
+          else
+            next=0
+          fi
 
-          # Use repo's GITHUB_TOKEN (no need for input PAT)
-          $token="${{ github.token }}"
-          $body=@{
-            ref    = "${{ github.ref_name }}"
-            inputs = @{
-              test_mode       = "false"
-              runtime_minutes = "${{ steps.cfg.outputs.runtime }}"
-              loops           = "$next"
-            }
-          } | ConvertTo-Json -Depth 5
-
-          Invoke-RestMethod -Method POST `
-            -Uri "https://api.github.com/repos/${{ github.repository }}/actions/workflows/Windows-RDP-via-Tailscale-B.yml/dispatches" `
-            -Headers @{ Authorization = "Bearer $token"; "Accept"="application/vnd.github+json" } `
-            -Body $body
+          # Dispatch workflow B
+          curl -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/macOS-VNC-via-Tailscale-B.yml/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"test_mode\":\"false\",\"runtime_minutes\":\"${{ steps.cfg.outputs.runtime }}\",\"loops\":\"$next\"}}"
