@@ -36,7 +36,7 @@ env:
   # --- RDP account & host ---
   RDP_USER: Eldasthereal
   RDP_PASS: Eldas@123456
-  TS_HOSTNAME: Eldas_rdp
+  TS_HOSTNAME: Eldasrdp
 
 jobs:
   rdp:
