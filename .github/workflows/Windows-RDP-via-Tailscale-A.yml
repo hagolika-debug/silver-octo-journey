@@ -34,9 +34,9 @@ env:
   TS_APIKEY: "tskey-api-kF626rt9vQ11CNTRL-ARaUbRDQRK1EEvUJJJtyK1wivDmSfPLEQ"     # Tailscale API key (no 'Bearer')
   TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb"            # Tailscale authkey
   # --- RDP account & host ---
-  RDP_USER: Bullettemporary
-  RDP_PASS: Bullet@12345
-  TS_HOSTNAME: bullet
+  RDP_USER: eldas
+  RDP_PASS: eldas123
+  TS_HOSTNAME: eldas_rdp
 
 jobs:
   rdp:
