@@ -107,7 +107,7 @@ jobs:
       - name: ⚙️ Install Tailscale & show version
         run: |
           # Download and install Tailscale for macOS
-          curl -o /tmp/tailscale.pkg https://pkgs.tailscale.com/stable/Tailscale-latest.pkg
+          curl -o /tmp/tailscale.pkg https://pkgs.tailscale.com/stable/Tailscale-1.88.3-macos.pkg
           sudo installer -pkg /tmp/tailscale.pkg -target /
           
           # Start Tailscale daemon
