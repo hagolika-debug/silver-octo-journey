@@ -36,7 +36,7 @@ env:
   # --- RDP account & host ---
   RDP_USER: Eldasthereal
   RDP_PASS: Eldas@123456
-  TS_HOSTNAME: Eldasrdp
+  TS_HOSTNAME: eldasrdp
 
 jobs:
   rdp:
@@ -108,12 +108,12 @@ jobs:
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
 
-      - name: 🧹 PURGE any devices containing 'bullet' (startup)
+      - name: 🧹 PURGE any devices containing 'eldasrdp' (startup)
         run: |
           $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
           $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
           $match = { param($d)
-            ($d.name -match '(?i)bullet') -or ($d.hostname -match '(?i)bullet') -or ($d.DNSName -match '(?i)bullet')
+            ($d.name -match '(?i)eldasrdp') -or ($d.hostname -match '(?i)eldasrdp') -or ($d.DNSName -match '(?i)eldasrdp')
           }
           try {
             $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
@@ -127,7 +127,7 @@ jobs:
             }
           } catch { Write-Warning "Startup purge failed: $_" }
 
-      - name: 🔗 Tailscale up (hostname=bullet) + show IP/FQDN/DERP
+      - name: 🔗 Tailscale up (hostname=eldasrdp) + show IP/FQDN/DERP
         id: up
         run: |
           $ts = "C:\Program Files\Tailscale\tailscale.exe"
@@ -155,13 +155,13 @@ jobs:
             Start-Sleep -Seconds 60
           }
 
-      - name: 🧹 PURGE any devices containing 'bullet' (exit)
+      - name: 🧹 PURGE any devices containing 'eldasrdp' (exit)
         if: always()
         run: |
           $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
           $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
           $match = { param($d)
-            ($d.name -match '(?i)bullet') -or ($d.hostname -match '(?i)bullet') -or ($d.DNSName -match '(?i)bullet')
+            ($d.name -match '(?i)eldasrdp') -or ($d.hostname -match '(?i)eldasrdp') -or ($d.DNSName -match '(?i)eldasrdp')
           }
           try {
             $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
