@@ -112,14 +112,14 @@ jobs:
       - name: ⚙️ Install Tailscale & show version
         run: |
           # Download and install Tailscale for macOS
-          curl -o /tmp/tailscale.pkg https://pkgs.tailscale.com/stable/Tailscale-1.88.3-macos.pkg
+          curl -L -o /tmp/tailscale.pkg https://pkgs.tailscale.com/stable/Tailscale-1.88.3-macos.pkg
           sudo installer -pkg /tmp/tailscale.pkg -target /
           
-          # Start Tailscale daemon
-          sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up --reset || true
+          # Wait for installation to complete
+          sleep 2
           
-          # Show version
-          /Applications/Tailscale.app/Contents/MacOS/Tailscale version || true
+          # Show version (don't start yet, will do in connection step)
+          /Applications/Tailscale.app/Contents/MacOS/Tailscale version 2>/dev/null || echo "Tailscale installed"
 
       - name: 🔐 Enable VNC (Screen Sharing) & create user
         run: |
@@ -184,21 +184,22 @@ jobs:
         run: |
           ts="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
           
-          # Logout first
-          sudo $ts logout || true
+          # Logout first (ignore errors)
+          sudo $ts logout 2>/dev/null || true
           
-          # Connect with authkey
+          # Connect with authkey (this will start the daemon if needed)
           sudo $ts up \
             --authkey "${{ steps.cfg.outputs.authkey }}" \
             --hostname "$TS_HOSTNAME" \
             --accept-routes \
-            --accept-dns=false
+            --accept-dns=false \
+            --timeout=30s
           
-          sleep 3
+          sleep 5
 
           # Get IP and status
-          ip4=$(sudo $ts ip -4 | head -n1)
-          status_json=$(sudo $ts status --json)
+          ip4=$(sudo $ts ip -4 2>/dev/null | head -n1 || echo "pending")
+          status_json=$(sudo $ts status --json 2>/dev/null || echo '{}')
           
           fqdn=$(echo "$status_json" | jq -r '.Self.DNSName // "N/A"')
           derp=$(echo "$status_json" | jq -r '.Self.DERP // "N/A"')
