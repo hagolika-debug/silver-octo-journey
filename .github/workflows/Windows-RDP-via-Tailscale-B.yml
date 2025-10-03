@@ -40,7 +40,7 @@ env:
   TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb"            # Tailscale authkey
   # --- RDP account & host ---
   RDP_USER: eldas
-  RDP_PASS: Eldas@12345
+  RDP_PASS: Eldas@123456
   TS_HOSTNAME: eldas_rdp
 
 jobs:
