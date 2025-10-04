@@ -75,7 +75,7 @@ jobs:
           # Extract the connection URL
           if [ -f sshx_output.txt ]; then
             cat sshx_output.txt
-            SSHX_URL=$(grep -oP 'https://sshx\.io/s/[a-zA-Z0-9#]+' sshx_output.txt | head -1)
+            SSHX_URL=$(grep -o 'https://sshx.io/s/[a-zA-Z0-9#]*' sshx_output.txt | head -1)
             echo "sshx_url=$SSHX_URL" >> $GITHUB_OUTPUT
             echo "sshx_pid=$SSHX_PID" >> $GITHUB_OUTPUT
             
