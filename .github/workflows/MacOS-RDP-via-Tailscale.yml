@@ -96,77 +96,31 @@ jobs:
           
           echo "Tailscale daemon started"
 
-      - name: 🔐 Setup VNC Server with Virtual Display
+      - name: 🖥️ Setup Terminal Access via SSHX
+        id: sshx
         run: |
-          # Create user account first
-          sudo dscl . -create /Users/${{ env.RDP_USER }}
-          sudo dscl . -create /Users/${{ env.RDP_USER }} UserShell /bin/bash
-          sudo dscl . -create /Users/${{ env.RDP_USER }} RealName "RDP User"
-          sudo dscl . -create /Users/${{ env.RDP_USER }} UniqueID 1001
-          sudo dscl . -create /Users/${{ env.RDP_USER }} PrimaryGroupID 80
-          sudo dscl . -create /Users/${{ env.RDP_USER }} NFSHomeDirectory /Users/${{ env.RDP_USER }}
-          sudo dscl . -passwd /Users/${{ env.RDP_USER }} "${{ env.RDP_PASS }}"
+          # Install SSHX for terminal access
+          curl -sSf https://sshx.io/get | sh
           
-          # Create home directory
-          sudo createhomedir -c -u ${{ env.RDP_USER }} || true
+          # Start sshx in the background and capture output
+          sshx > sshx_output.txt 2>&1 &
+          SSHX_PID=$!
           
-          # Add to admin group
-          sudo dscl . -append /Groups/admin GroupMembership ${{ env.RDP_USER }}
+          # Wait for sshx to start and get the URL
+          sleep 3
           
-          # Install TigerVNC server (supports virtual displays)
-          brew install tiger-vnc
-          
-          # Find where TigerVNC was installed
-          VNC_PREFIX=$(brew --prefix tiger-vnc)
-          echo "TigerVNC installed at: $VNC_PREFIX"
-          
-          # List files to find binaries
-          ls -la "$VNC_PREFIX/bin/" || echo "No bin directory"
-          ls -la "$VNC_PREFIX/" || echo "Prefix directory listing failed"
-          
-          # Try to find vncserver and vncpasswd
-          VNCSERVER=$(find "$VNC_PREFIX" -name "vncserver" -type f 2>/dev/null | head -1)
-          VNCPASSWD=$(find "$VNC_PREFIX" -name "vncpasswd" -type f 2>/dev/null | head -1)
-          
-          echo "Found vncserver: $VNCSERVER"
-          echo "Found vncpasswd: $VNCPASSWD"
-          
-          if [[ -z "$VNCSERVER" ]] || [[ -z "$VNCPASSWD" ]]; then
-            echo "Error: TigerVNC binaries not found"
-            echo "Trying alternative: using built-in Screen Sharing instead"
+          # Extract the connection URL
+          if [ -f sshx_output.txt ]; then
+            cat sshx_output.txt
+            SSHX_URL=$(grep -oE 'https://sshx.io/s/[a-zA-Z0-9#]+' sshx_output.txt | head -1)
+            echo "sshx_url=$SSHX_URL" >> $GITHUB_OUTPUT
+            echo "sshx_pid=$SSHX_PID" >> $GITHUB_OUTPUT
             
-            # Fallback to macOS Screen Sharing
-            sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-              -activate -configure -access -on \
-              -configure -allowAccessFor -allUsers \
-              -configure -restart -agent -privs -all
-            
-            echo "Using macOS Screen Sharing on port 5900"
-            echo "Note: You may see a black screen - this is a limitation of headless macOS runners"
-            exit 0
-          fi
-          
-          # Create VNC password file
-          mkdir -p ~/.vnc
-          echo "${{ env.RDP_PASS }}" | "$VNCPASSWD" -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-          
-          # Start VNC server with virtual display
-          "$VNCSERVER" :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth -PasswordFile ~/.vnc/passwd &
-          
-          # Wait for VNC server to start
-          sleep 5
-          
-          # Check if VNC is running
-          if pgrep -f "Xvnc" > /dev/null; then
-            echo "VNC server started successfully on display :1 (port 5901)"
-            echo "VNC server running on port 5901"
+            echo "SSHX Terminal URL: $SSHX_URL"
           else
-            echo "Warning: VNC server may not have started properly"
-            cat ~/.vnc/*.log 2>/dev/null || echo "No VNC logs found"
+            echo "Failed to start sshx"
+            exit 1
           fi
-          
-          echo "Connect using: <tailscale-ip>:5901"
 
       - name: 🧹 PURGE any devices containing hostname (startup)
         run: |
@@ -213,22 +167,22 @@ jobs:
           echo "derp=$DERP" >> $GITHUB_OUTPUT
           
           {
-            echo "### VNC (macOS)"
+            echo "### Terminal Access (macOS)"
             echo "Host: ${{ env.TS_HOSTNAME }}"
             echo "IPv4: $IP4"
             echo "MagicDNS: $FQDN"
             echo "DERP: $DERP"
-            echo "Password: ${{ env.RDP_PASS }}"
             echo ""
-            echo "**VNC Port:** 5901 (display :1)"
-            echo "**Resolution:** 1920x1080"
+            echo "**SSHX Terminal URL:** ${{ steps.sshx.outputs.sshx_url }}"
             echo ""
-            echo "**Connect using:**"
-            echo "- VNC Viewer: \`$IP4:5901\`"
-            echo "- macOS Screen Sharing: \`vnc://$IP4:5901\`"
-            echo "- Or use MagicDNS: \`vnc://$FQDN:5901\`"
+            echo "**Access Methods:**"
+            echo "1. **Web Terminal (SSHX):** Click the URL above for instant browser-based terminal access"
+            echo "2. **SSH via Tailscale:** \`ssh runner@$IP4\` (if SSH is enabled)"
             echo ""
-            echo "**Note:** Use password \`${{ env.RDP_PASS }}\` when prompted"
+            echo "**System Info:**"
+            echo "- OS: macOS (GitHub Actions Runner)"
+            echo "- Shell: bash/zsh"
+            echo "- Access: Full terminal with sudo privileges"
           } >> $GITHUB_STEP_SUMMARY
 
       - name: ⏳ Keep alive
@@ -236,9 +190,12 @@ jobs:
           RUNTIME=${{ steps.cfg.outputs.runtime }}
           END_TIME=$(($(date +%s) + RUNTIME * 60))
           
+          echo "SSHX Terminal URL: ${{ steps.sshx.outputs.sshx_url }}"
+          echo "Tailscale IP: ${{ steps.up.outputs.ip4 }}"
+          
           while [[ $(date +%s) -lt $END_TIME ]]; do
             LEFT=$(( (END_TIME - $(date +%s)) / 60 ))
-            echo "Screen Sharing alive... ($LEFT min left)"
+            echo "Terminal session alive... ($LEFT min left)"
             sleep 60
           done
 
