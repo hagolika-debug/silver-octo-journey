@@ -96,15 +96,9 @@ jobs:
           
           echo "Tailscale daemon started"
 
-      - name: 🔐 Enable Screen Sharing (VNC/RDP)
+      - name: 🔐 Setup GUI and Enable Screen Sharing (VNC)
         run: |
-          # Enable Screen Sharing (VNC server on macOS)
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on \
-            -configure -allowAccessFor -allUsers \
-            -configure -restart -agent -privs -all
-          
-          # Create user account
+          # Create user account first
           sudo dscl . -create /Users/${{ env.RDP_USER }}
           sudo dscl . -create /Users/${{ env.RDP_USER }} UserShell /bin/bash
           sudo dscl . -create /Users/${{ env.RDP_USER }} RealName "RDP User"
@@ -119,11 +113,44 @@ jobs:
           # Add to admin group
           sudo dscl . -append /Groups/admin GroupMembership ${{ env.RDP_USER }}
           
-          # Enable VNC for the user
+          # Enable auto-login for the user to start GUI session
+          sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser ${{ env.RDP_USER }}
+          
+          # Install a lightweight window manager
+          brew install --cask xquartz || true
+          
+          # Start a GUI session in the background
+          sudo -u ${{ env.RDP_USER }} nohup /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder &
+          
+          # Wait for GUI to initialize
+          sleep 5
+          
+          # Enable built-in VNC server (Screen Sharing)
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -configure -allowAccessFor -allUsers \
+            -configure -restart -agent -privs -all
+          
+          # Enable the standard Screen Sharing service
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
+          
+          # Set VNC password
+          echo "${{ env.RDP_PASS }}" | sudo tee /Library/Preferences/com.apple.VNCSettings.txt > /dev/null
+          
+          # Enable Remote Management for the user
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -users ${{ env.RDP_USER }} -access -on -privs -all
           
-          echo "Screen Sharing enabled on port 5900"
+          # Enable legacy VNC for better compatibility
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -clientopts -setvnclegacy -vnclegacy yes
+          
+          # Restart the Screen Sharing service
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -restart -agent
+          
+          echo "GUI session started for user: ${{ env.RDP_USER }}"
+          echo "Screen Sharing (VNC) enabled on port 5900"
 
       - name: 🧹 PURGE any devices containing hostname (startup)
         run: |
