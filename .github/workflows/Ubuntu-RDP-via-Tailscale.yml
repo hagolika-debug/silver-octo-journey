@@ -93,34 +93,55 @@ jobs:
           sudo apt-get update
           
           # Install desktop environment (XFCE - lightweight)
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies dbus-x11
           
           # Install XRDP
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
           
-          # Configure XRDP to use XFCE
-          echo "xfce4-session" | sudo tee /etc/skel/.xsession
-          
-          # Create RDP user
+          # Create RDP user first
           sudo useradd -m -s /bin/bash "${{ env.RDP_USER }}" || true
           echo "${{ env.RDP_USER }}:${{ env.RDP_PASS }}" | sudo chpasswd
           sudo usermod -aG sudo "${{ env.RDP_USER }}"
           
-          # Set XFCE for the user
-          echo "xfce4-session" | sudo tee /home/${{ env.RDP_USER }}/.xsession
+          # Configure XRDP session for the user
+          sudo bash -c "cat > /home/${{ env.RDP_USER }}/.xsession" << 'EOF'
+          #!/bin/bash
+          unset DBUS_SESSION_BUS_ADDRESS
+          unset XDG_RUNTIME_DIR
+          export XDG_SESSION_TYPE=x11
+          export XDG_CURRENT_DESKTOP=XFCE
+          exec startxfce4
+          EOF
+          
+          sudo chmod +x /home/${{ env.RDP_USER }}/.xsession
           sudo chown ${{ env.RDP_USER }}:${{ env.RDP_USER }} /home/${{ env.RDP_USER }}/.xsession
+          
+          # Also create .xsessionrc for additional environment setup
+          sudo bash -c "cat > /home/${{ env.RDP_USER }}/.xsessionrc" << 'EOF'
+          export XDG_SESSION_TYPE=x11
+          export XDG_CURRENT_DESKTOP=XFCE
+          EOF
+          
+          sudo chown ${{ env.RDP_USER }}:${{ env.RDP_USER }} /home/${{ env.RDP_USER }}/.xsessionrc
           
           # Configure XRDP
           sudo sed -i 's/^port=3389/port=3389/' /etc/xrdp/xrdp.ini
           sudo sed -i 's/^max_bpp=32/max_bpp=128/' /etc/xrdp/xrdp.ini
           sudo sed -i 's/^xserverbpp=24/xserverbpp=128/' /etc/xrdp/xrdp.ini
           
+          # Configure startwm.sh to use the user's .xsession
+          sudo sed -i 's|^test -x /etc/X11/Xsession && exec /etc/X11/Xsession|if [ -f ~/.xsession ]; then\n  exec ~/.xsession\nelse\n  test -x /etc/X11/Xsession \&\& exec /etc/X11/Xsession\nfi|' /etc/xrdp/startwm.sh
+          
+          # Add user to ssl-cert group for XRDP
+          sudo adduser xrdp ssl-cert
+          sudo adduser "${{ env.RDP_USER }}" ssl-cert
+          
           # Allow RDP through firewall
           sudo ufw allow 3389/tcp || true
           
-          # Start XRDP service
+          # Restart XRDP service
           sudo systemctl enable xrdp
-          sudo systemctl start xrdp
+          sudo systemctl restart xrdp
           sudo systemctl status xrdp --no-pager
 
       - name: 🧹 PURGE any devices containing 'eldasrdp-ubuntu' (startup)
