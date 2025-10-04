@@ -1,0 +1,242 @@
+name: macOS RDP via Tailscale
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: "Run 5-minute test loop"
+        type: boolean
+        default: false
+      runtime_minutes:
+        description: "Runtime in minutes (max 360; capped to 355)"
+        required: false
+        default: "355"
+      loops:
+        description: "How many handoffs (0 = infinite)"
+        required: false
+        default: "0"
+
+concurrency:
+  group: tailscale-rdp-macos-singleton
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # --- Fixed credentials/identifiers (EDIT THESE) ---
+  TS_TAILNET: "wadide55@gmail.com"
+  TS_APIKEY: "tskey-api-kF626rt9vQ11CNTRL-ARaUbRDQRK1EEvUJJJtyK1wivDmSfPLEQ"
+  TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb"
+  # --- RDP/VNC account & host ---
+  RDP_USER: rdpuser
+  RDP_PASS: rdprdp@12345
+  TS_HOSTNAME: rdp-macos
+
+jobs:
+  rdp:
+    runs-on: macos-latest
+    timeout-minutes: 370
+    steps:
+      - name: 🔧 Resolve inputs
+        id: cfg
+        run: |
+          # Parse test mode
+          if [[ "${{ inputs.test_mode }}" == "true" ]]; then
+            IS_TEST=true
+            RUNTIME=5
+          else
+            IS_TEST=false
+            RUNTIME=${{ inputs.runtime_minutes }}
+            # Validate runtime is a number
+            if ! [[ "$RUNTIME" =~ ^[0-9]+$ ]]; then
+              RUNTIME=355
+            fi
+            # Ensure minimum runtime when not in test mode
+            if [[ $RUNTIME -lt 6 ]]; then
+              RUNTIME=355
+            fi
+            # Cap at 355 if too high
+            if [[ $RUNTIME -gt 360 ]]; then
+              RUNTIME=355
+            fi
+          fi
+
+          # Parse loops
+          LOOPS=${{ inputs.loops }}
+          if ! [[ "$LOOPS" =~ ^[0-9]+$ ]]; then
+            LOOPS=0
+          fi
+          if [[ $LOOPS -lt 0 ]]; then
+            LOOPS=0
+          fi
+
+          echo "tailnet=${{ env.TS_TAILNET }}" >> $GITHUB_OUTPUT
+          echo "apikey=${{ env.TS_APIKEY }}" >> $GITHUB_OUTPUT
+          echo "authkey=${{ env.TS_AUTHKEY }}" >> $GITHUB_OUTPUT
+          echo "runtime=$RUNTIME" >> $GITHUB_OUTPUT
+          echo "loops=$LOOPS" >> $GITHUB_OUTPUT
+          echo "Resolved: test=$IS_TEST, runtime=$RUNTIME, loops=$LOOPS"
+
+      - name: ⚙️ Install Tailscale
+        run: |
+          # Download and install Tailscale for macOS
+          curl -o /tmp/tailscale.pkg https://pkgs.tailscale.com/stable/Tailscale-latest.pkg
+          sudo installer -pkg /tmp/tailscale.pkg -target /
+          
+          # Wait for Tailscale to be ready
+          sleep 3
+          
+          # Show version
+          /Applications/Tailscale.app/Contents/MacOS/Tailscale version || true
+
+      - name: 🔐 Enable Screen Sharing (VNC/RDP)
+        run: |
+          # Enable Screen Sharing (VNC server on macOS)
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -configure -allowAccessFor -allUsers \
+            -configure -restart -agent -privs -all
+          
+          # Create user account
+          sudo dscl . -create /Users/${{ env.RDP_USER }}
+          sudo dscl . -create /Users/${{ env.RDP_USER }} UserShell /bin/bash
+          sudo dscl . -create /Users/${{ env.RDP_USER }} RealName "RDP User"
+          sudo dscl . -create /Users/${{ env.RDP_USER }} UniqueID 1001
+          sudo dscl . -create /Users/${{ env.RDP_USER }} PrimaryGroupID 80
+          sudo dscl . -create /Users/${{ env.RDP_USER }} NFSHomeDirectory /Users/${{ env.RDP_USER }}
+          sudo dscl . -passwd /Users/${{ env.RDP_USER }} "${{ env.RDP_PASS }}"
+          
+          # Create home directory
+          sudo createhomedir -c -u ${{ env.RDP_USER }} || true
+          
+          # Add to admin group
+          sudo dscl . -append /Groups/admin GroupMembership ${{ env.RDP_USER }}
+          
+          # Enable VNC for the user
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -users ${{ env.RDP_USER }} -access -on -privs -all
+          
+          echo "Screen Sharing enabled on port 5900"
+
+      - name: 🧹 PURGE any devices containing hostname (startup)
+        run: |
+          HOSTNAME="${{ env.TS_HOSTNAME }}"
+          echo "Looking for devices matching: $HOSTNAME"
+          DEVICES=$(curl -s -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+            "https://api.tailscale.com/api/v2/tailnet/$(echo '${{ steps.cfg.outputs.tailnet }}' | jq -sRr @uri)/devices")
+          
+          if [[ -n "$DEVICES" ]] && echo "$DEVICES" | jq -e '.devices' > /dev/null 2>&1; then
+            # Match hostname with optional suffix (e.g., rdp-macos, rdp-macos-1, rdp-macos-2)
+            echo "$DEVICES" | jq -r --arg hostname "$HOSTNAME" '.devices[]? | select((.name | test("^" + $hostname + "(-[0-9]+)?$"; "i")) or (.hostname | test("^" + $hostname + "(-[0-9]+)?$"; "i"))) | "\(.id) - \(.name // .hostname)"' | while read -r device_info; do
+              device_id=$(echo "$device_info" | cut -d' ' -f1)
+              device_name=$(echo "$device_info" | cut -d'-' -f2-)
+              if [[ -n "$device_id" ]]; then
+                echo "Deleting device: $device_name (ID: $device_id)"
+                curl -s -X DELETE -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+                  "https://api.tailscale.com/api/v2/device/$device_id" || true
+              fi
+            done
+          else
+            echo "No devices found or API error - skipping purge"
+          fi
+
+      - name: 🔗 Tailscale up + show IP/FQDN
+        id: up
+        run: |
+          # Start Tailscale daemon
+          sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up \
+            --authkey "${{ steps.cfg.outputs.authkey }}" \
+            --hostname "${{ env.TS_HOSTNAME }}" \
+            --accept-routes \
+            --accept-dns=false
+          
+          sleep 3
+          
+          # Get Tailscale IP
+          IP4=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4)
+          STATUS=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale status --json)
+          FQDN=$(echo "$STATUS" | jq -r '.Self.DNSName')
+          DERP=$(echo "$STATUS" | jq -r '.Self.Relay')
+          
+          echo "ip4=$IP4" >> $GITHUB_OUTPUT
+          echo "fqdn=$FQDN" >> $GITHUB_OUTPUT
+          echo "derp=$DERP" >> $GITHUB_OUTPUT
+          
+          {
+            echo "### RDP (macOS)"
+            echo "Host: ${{ env.TS_HOSTNAME }}"
+            echo "IPv4: $IP4"
+            echo "MagicDNS: $FQDN"
+            echo "DERP: $DERP"
+            echo "User: ${{ env.RDP_USER }}"
+            echo "Pass: ${{ env.RDP_PASS }}"
+            echo ""
+            echo "**VNC/Screen Sharing Port:** 5900"
+            echo ""
+            echo "**Connect using:**"
+            echo "- Microsoft Remote Desktop: \`vnc://$IP4:5900\`"
+            echo "- macOS Screen Sharing: \`vnc://${{ env.RDP_USER }}:${{ env.RDP_PASS }}@$IP4\`"
+            echo "- Or use MagicDNS: \`vnc://$FQDN:5900\`"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: ⏳ Keep alive
+        run: |
+          RUNTIME=${{ steps.cfg.outputs.runtime }}
+          END_TIME=$(($(date +%s) + RUNTIME * 60))
+          
+          while [[ $(date +%s) -lt $END_TIME ]]; do
+            LEFT=$(( (END_TIME - $(date +%s)) / 60 ))
+            echo "Screen Sharing alive... ($LEFT min left)"
+            sleep 60
+          done
+
+      - name: 🧹 PURGE any devices containing hostname (exit)
+        if: always()
+        run: |
+          HOSTNAME="${{ env.TS_HOSTNAME }}"
+          echo "Looking for devices matching: $HOSTNAME"
+          DEVICES=$(curl -s -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+            "https://api.tailscale.com/api/v2/tailnet/$(echo '${{ steps.cfg.outputs.tailnet }}' | jq -sRr @uri)/devices")
+          
+          if [[ -n "$DEVICES" ]] && echo "$DEVICES" | jq -e '.devices' > /dev/null 2>&1; then
+            # Match hostname with optional suffix (e.g., rdp-macos, rdp-macos-1, rdp-macos-2)
+            echo "$DEVICES" | jq -r --arg hostname "$HOSTNAME" '.devices[]? | select((.name | test("^" + $hostname + "(-[0-9]+)?$"; "i")) or (.hostname | test("^" + $hostname + "(-[0-9]+)?$"; "i"))) | "\(.id) - \(.name // .hostname)"' | while read -r device_info; do
+              device_id=$(echo "$device_info" | cut -d' ' -f1)
+              device_name=$(echo "$device_info" | cut -d'-' -f2-)
+              if [[ -n "$device_id" ]]; then
+                echo "Deleting device: $device_name (ID: $device_id)"
+                curl -s -X DELETE -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+                  "https://api.tailscale.com/api/v2/device/$device_id" || true
+              fi
+            done
+          else
+            echo "No devices found or API error - skipping purge"
+          fi
+
+      - name: 🔁 Restart workflow (self-dispatch)
+        if: always()
+        run: |
+          LOOPS=${{ steps.cfg.outputs.loops }}
+          
+          if [[ $LOOPS -eq 1 ]]; then
+            echo "Loops finished; not dispatching."
+            exit 0
+          fi
+          
+          if [[ $LOOPS -gt 1 ]]; then
+            NEXT=$((LOOPS - 1))
+          else
+            NEXT=0
+          fi
+          
+          curl -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/MacOS-RDP-via-Tailscale.yml/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"test_mode\":\"false\",\"runtime_minutes\":\"${{ steps.cfg.outputs.runtime }}\",\"loops\":\"$NEXT\"}}"
