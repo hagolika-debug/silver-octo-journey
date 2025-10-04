@@ -116,18 +116,43 @@ jobs:
           # Install TigerVNC server (supports virtual displays)
           brew install tiger-vnc
           
-          # Set up paths for TigerVNC
-          VNC_BIN="/opt/homebrew/bin"
-          export PATH="$VNC_BIN:$PATH"
+          # Find where TigerVNC was installed
+          VNC_PREFIX=$(brew --prefix tiger-vnc)
+          echo "TigerVNC installed at: $VNC_PREFIX"
+          
+          # List files to find binaries
+          ls -la "$VNC_PREFIX/bin/" || echo "No bin directory"
+          ls -la "$VNC_PREFIX/" || echo "Prefix directory listing failed"
+          
+          # Try to find vncserver and vncpasswd
+          VNCSERVER=$(find "$VNC_PREFIX" -name "vncserver" -type f 2>/dev/null | head -1)
+          VNCPASSWD=$(find "$VNC_PREFIX" -name "vncpasswd" -type f 2>/dev/null | head -1)
+          
+          echo "Found vncserver: $VNCSERVER"
+          echo "Found vncpasswd: $VNCPASSWD"
+          
+          if [[ -z "$VNCSERVER" ]] || [[ -z "$VNCPASSWD" ]]; then
+            echo "Error: TigerVNC binaries not found"
+            echo "Trying alternative: using built-in Screen Sharing instead"
+            
+            # Fallback to macOS Screen Sharing
+            sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+              -activate -configure -access -on \
+              -configure -allowAccessFor -allUsers \
+              -configure -restart -agent -privs -all
+            
+            echo "Using macOS Screen Sharing on port 5900"
+            echo "Note: You may see a black screen - this is a limitation of headless macOS runners"
+            exit 0
+          fi
           
           # Create VNC password file
           mkdir -p ~/.vnc
-          echo "${{ env.RDP_PASS }}" | $VNC_BIN/vncpasswd -f > ~/.vnc/passwd
+          echo "${{ env.RDP_PASS }}" | "$VNCPASSWD" -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
           
           # Start VNC server with virtual display
-          # This creates a virtual framebuffer that doesn't need a physical display
-          $VNC_BIN/vncserver :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth -PasswordFile ~/.vnc/passwd &
+          "$VNCSERVER" :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth -PasswordFile ~/.vnc/passwd &
           
           # Wait for VNC server to start
           sleep 5
@@ -138,7 +163,6 @@ jobs:
             echo "VNC server running on port 5901"
           else
             echo "Warning: VNC server may not have started properly"
-            # Show logs for debugging
             cat ~/.vnc/*.log 2>/dev/null || echo "No VNC logs found"
           fi
           
