@@ -34,9 +34,9 @@ env:
   TS_APIKEY: "tskey-api-kF626rt9vQ11CNTRL-ARaUbRDQRK1EEvUJJJtyK1wivDmSfPLEQ"     # Tailscale API key (no 'Bearer')
   TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb"            # Tailscale authkey
   # --- RDP account & host ---
-  RDP_USER: Eldasthereal
-  RDP_PASS: Eldas@123456
-  TS_HOSTNAME: eldasrdp
+  RDP_USER: rdpuser
+  RDP_PASS: rdprdp@12345
+  TS_HOSTNAME: rdp-windows
 
 jobs:
   rdp:
@@ -108,12 +108,13 @@ jobs:
           Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" | Out-Null
 
-      - name: 🧹 PURGE any devices containing 'eldasrdp' (startup)
+      - name: 🧹 PURGE any devices containing hostname (startup)
         run: |
           $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
           $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
+          $hostname = "${{ env.TS_HOSTNAME }}"
           $match = { param($d)
-            ($d.name -match '(?i)eldasrdp') -or ($d.hostname -match '(?i)eldasrdp') -or ($d.DNSName -match '(?i)eldasrdp')
+            ($d.name -match "(?i)$hostname") -or ($d.hostname -match "(?i)$hostname") -or ($d.DNSName -match "(?i)$hostname")
           }
           try {
             $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
@@ -127,7 +128,7 @@ jobs:
             }
           } catch { Write-Warning "Startup purge failed: $_" }
 
-      - name: 🔗 Tailscale up (hostname=eldasrdp) + show IP/FQDN/DERP
+      - name: 🔗 Tailscale up + show IP/FQDN/DERP
         id: up
         run: |
           $ts = "C:\Program Files\Tailscale\tailscale.exe"
@@ -155,13 +156,14 @@ jobs:
             Start-Sleep -Seconds 60
           }
 
-      - name: 🧹 PURGE any devices containing 'eldasrdp' (exit)
+      - name: 🧹 PURGE any devices containing hostname (exit)
         if: always()
         run: |
           $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
           $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
+          $hostname = "${{ env.TS_HOSTNAME }}"
           $match = { param($d)
-            ($d.name -match '(?i)eldasrdp') -or ($d.hostname -match '(?i)eldasrdp') -or ($d.DNSName -match '(?i)eldasrdp')
+            ($d.name -match "(?i)$hostname") -or ($d.hostname -match "(?i)$hostname") -or ($d.DNSName -match "(?i)$hostname")
           }
           try {
             $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
