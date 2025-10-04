@@ -92,8 +92,8 @@ jobs:
           # Update package list
           sudo apt-get update
           
-          # Install MATE desktop environment (more reliable with XRDP than XFCE)
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-mate-desktop
+          # Install LXDE desktop environment (lightweight and fast)
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y lxde-core lxde
           
           # Install XRDP
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
@@ -103,17 +103,25 @@ jobs:
           echo "${{ env.RDP_USER }}:${{ env.RDP_PASS }}" | sudo chpasswd
           sudo usermod -aG sudo "${{ env.RDP_USER }}"
           
-          # Configure XRDP to use MATE
-          sudo sed -i.bak '/fi/a #xrdp multiple users configuration \n mate-session \n' /etc/xrdp/startwm.sh
+          # Create user directories with proper permissions
+          sudo mkdir -p /home/${{ env.RDP_USER }}/.config
+          sudo chown -R ${{ env.RDP_USER }}:${{ env.RDP_USER }} /home/${{ env.RDP_USER }}
           
-          # Create .xsession for the user
-          echo 'mate-session' | sudo tee /home/${{ env.RDP_USER }}/.xsession
-          sudo chmod +x /home/${{ env.RDP_USER }}/.xsession
-          sudo chown ${{ env.RDP_USER }}:${{ env.RDP_USER }} /home/${{ env.RDP_USER }}/.xsession
+          # Configure XRDP startwm.sh to use LXDE
+          sudo bash -c 'cat > /etc/xrdp/startwm.sh' << 'STARTWM'
+          #!/bin/sh
+          if [ -r /etc/default/locale ]; then
+            . /etc/default/locale
+            export LANG LANGUAGE
+          fi
+          startlxde
+          STARTWM
           
-          # Configure XRDP settings
-          sudo sed -i 's/^max_bpp=32/max_bpp=128/' /etc/xrdp/xrdp.ini
-          sudo sed -i 's/^xserverbpp=24/xserverbpp=128/' /etc/xrdp/xrdp.ini
+          sudo chmod +x /etc/xrdp/startwm.sh
+          
+          # Configure XRDP settings for better performance
+          sudo sed -i 's/^max_bpp=32/max_bpp=24/' /etc/xrdp/xrdp.ini
+          sudo sed -i 's/^xserverbpp=24/xserverbpp=24/' /etc/xrdp/xrdp.ini
           
           # Add user to ssl-cert group
           sudo adduser xrdp ssl-cert
