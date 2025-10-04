@@ -1,0 +1,137 @@
+name: macOS Terminal via SSHX
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_minutes:
+        description: "Runtime in minutes (max 360; capped to 355)"
+        required: false
+        default: "355"
+      loops:
+        description: "How many handoffs (0 = infinite)"
+        required: false
+        default: "0"
+
+concurrency:
+  group: sshx-terminal-macos-singleton
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  terminal:
+    runs-on: macos-latest
+    timeout-minutes: 370
+    steps:
+      - name: 🔧 Resolve inputs
+        id: cfg
+        run: |
+          RUNTIME=${{ inputs.runtime_minutes }}
+          # Validate runtime is a number
+          if ! [[ "$RUNTIME" =~ ^[0-9]+$ ]]; then
+            RUNTIME=355
+          fi
+          # Ensure minimum runtime
+          if [[ $RUNTIME -lt 5 ]]; then
+            RUNTIME=355
+          fi
+          # Cap at 355 if too high
+          if [[ $RUNTIME -gt 360 ]]; then
+            RUNTIME=355
+          fi
+
+          LOOPS=${{ inputs.loops }}
+          if ! [[ "$LOOPS" =~ ^[0-9]+$ ]]; then
+            LOOPS=0
+          fi
+          if [[ $LOOPS -lt 0 ]]; then
+            LOOPS=0
+          fi
+
+          echo "runtime=$RUNTIME" >> $GITHUB_OUTPUT
+          echo "loops=$LOOPS" >> $GITHUB_OUTPUT
+          echo "Resolved: runtime=$RUNTIME, loops=$LOOPS"
+
+      - name: 📦 Install SSHX
+        run: |
+          curl -sSf https://sshx.io/get | sh
+          
+      - name: 🚀 Start SSHX Terminal Session
+        id: sshx
+        run: |
+          # Start sshx in the background and capture output
+          sshx > sshx_output.txt 2>&1 &
+          SSHX_PID=$!
+          
+          # Wait for sshx to start and get the URL
+          sleep 3
+          
+          # Extract the connection URL
+          if [ -f sshx_output.txt ]; then
+            cat sshx_output.txt
+            SSHX_URL=$(grep -oP 'https://sshx\.io/s/[a-zA-Z0-9#]+' sshx_output.txt | head -1)
+            echo "sshx_url=$SSHX_URL" >> $GITHUB_OUTPUT
+            echo "sshx_pid=$SSHX_PID" >> $GITHUB_OUTPUT
+            
+            {
+              echo "### 🖥️ SSHX Terminal Access (macOS)"
+              echo ""
+              echo "**Connection URL:** $SSHX_URL"
+              echo ""
+              echo "**Instructions:**"
+              echo "1. Click the URL above to access your terminal"
+              echo "2. You'll have full shell access to the macOS runner"
+              echo "3. Session will remain active for ${{ steps.cfg.outputs.runtime }} minutes"
+              echo ""
+              echo "**System Info:**"
+              echo "- OS: macOS (GitHub Actions Runner)"
+              echo "- Shell: bash/zsh"
+              echo "- CPU: \$(sysctl -n hw.ncpu) cores"
+              echo "- RAM: \$(sysctl -n hw.memsize | awk '{print \$1/1024/1024/1024\" GB\"}')"
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Failed to start sshx"
+            exit 1
+          fi
+
+      - name: ⏳ Keep session alive
+        run: |
+          RUNTIME=${{ steps.cfg.outputs.runtime }}
+          END_TIME=$(($(date +%s) + RUNTIME * 60))
+          
+          echo "SSHX session active. Connect at: ${{ steps.sshx.outputs.sshx_url }}"
+          echo "Session will run for $RUNTIME minutes"
+          
+          while [[ $(date +%s) -lt $END_TIME ]]; do
+            LEFT=$(( (END_TIME - $(date +%s)) / 60 ))
+            echo "Session alive... ($LEFT min left) - URL: ${{ steps.sshx.outputs.sshx_url }}"
+            sleep 60
+          done
+
+      - name: 🔁 Restart workflow (self-dispatch)
+        if: always()
+        run: |
+          LOOPS=${{ steps.cfg.outputs.loops }}
+          
+          if [[ $LOOPS -eq 1 ]]; then
+            echo "Loops finished; not dispatching."
+            exit 0
+          fi
+          
+          if [[ $LOOPS -gt 1 ]]; then
+            NEXT=$((LOOPS - 1))
+          else
+            NEXT=0
+          fi
+          
+          curl -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/MacOS-SSHX-Terminal.yml/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"runtime_minutes\":\"${{ steps.cfg.outputs.runtime }}\",\"loops\":\"$NEXT\"}}"
