@@ -96,7 +96,7 @@ jobs:
           
           echo "Tailscale daemon started"
 
-      - name: 🔐 Setup GUI Session and VNC
+      - name: 🔐 Setup VNC Server with Virtual Display
         run: |
           # Create user account first
           sudo dscl . -create /Users/${{ env.RDP_USER }}
@@ -113,61 +113,30 @@ jobs:
           # Add to admin group
           sudo dscl . -append /Groups/admin GroupMembership ${{ env.RDP_USER }}
           
-          # Enable auto-login for the user to create a GUI session
-          sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser ${{ env.RDP_USER }}
+          # Install TigerVNC server (supports virtual displays)
+          brew install tigervnc
           
-          # Install and configure a VNC server (using OSXvnc/Vine Server alternative)
-          # Use built-in screen sharing but ensure a session exists
+          # Create VNC password file
+          mkdir -p ~/.vnc
+          echo "${{ env.RDP_PASS }}" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
           
-          # Create a launch agent to start GUI session
-          sudo tee /Library/LaunchDaemons/com.github.actions.gui.plist > /dev/null << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>Label</key>
-              <string>com.github.actions.gui</string>
-              <key>ProgramArguments</key>
-              <array>
-                  <string>/usr/bin/login</string>
-                  <string>-f</string>
-                  <string>${{ env.RDP_USER }}</string>
-              </array>
-              <key>RunAtLoad</key>
-              <true/>
-              <key>KeepAlive</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
+          # Start VNC server with virtual display
+          # This creates a virtual framebuffer that doesn't need a physical display
+          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth -PasswordFile ~/.vnc/passwd &
           
-          # Enable Screen Sharing
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on \
-            -configure -allowAccessFor -allUsers \
-            -configure -restart -agent -privs -all
-          
-          # Enable for specific user
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -users ${{ env.RDP_USER }} -access -on -privs -all
-          
-          # Enable legacy VNC
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvnclegacy -vnclegacy yes
-          
-          # Set VNC password
-          echo "${{ env.RDP_PASS }}" | sudo tee /Library/Preferences/com.apple.VNCSettings.txt > /dev/null
-          
-          # Load the GUI session
-          sudo launchctl load /Library/LaunchDaemons/com.github.actions.gui.plist || true
-          
-          # Restart Screen Sharing
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -restart -agent
-          
-          echo "GUI session and VNC enabled"
-          echo "Waiting for session to initialize..."
+          # Wait for VNC server to start
           sleep 5
+          
+          # Check if VNC is running
+          if pgrep -f "Xvnc" > /dev/null; then
+            echo "VNC server started successfully on display :1 (port 5901)"
+          else
+            echo "Warning: VNC server may not have started properly"
+          fi
+          
+          echo "VNC server running on port 5901"
+          echo "Connect using: <tailscale-ip>:5901"
 
       - name: 🧹 PURGE any devices containing hostname (startup)
         run: |
@@ -214,20 +183,22 @@ jobs:
           echo "derp=$DERP" >> $GITHUB_OUTPUT
           
           {
-            echo "### RDP (macOS)"
+            echo "### VNC (macOS)"
             echo "Host: ${{ env.TS_HOSTNAME }}"
             echo "IPv4: $IP4"
             echo "MagicDNS: $FQDN"
             echo "DERP: $DERP"
-            echo "User: ${{ env.RDP_USER }}"
-            echo "Pass: ${{ env.RDP_PASS }}"
+            echo "Password: ${{ env.RDP_PASS }}"
             echo ""
-            echo "**VNC/Screen Sharing Port:** 5900"
+            echo "**VNC Port:** 5901 (display :1)"
+            echo "**Resolution:** 1920x1080"
             echo ""
             echo "**Connect using:**"
-            echo "- Microsoft Remote Desktop: \`vnc://$IP4:5900\`"
-            echo "- macOS Screen Sharing: \`vnc://${{ env.RDP_USER }}:${{ env.RDP_PASS }}@$IP4\`"
-            echo "- Or use MagicDNS: \`vnc://$FQDN:5900\`"
+            echo "- VNC Viewer: \`$IP4:5901\`"
+            echo "- macOS Screen Sharing: \`vnc://$IP4:5901\`"
+            echo "- Or use MagicDNS: \`vnc://$FQDN:5901\`"
+            echo ""
+            echo "**Note:** Use password \`${{ env.RDP_PASS }}\` when prompted"
           } >> $GITHUB_STEP_SUMMARY
 
       - name: ⏳ Keep alive
