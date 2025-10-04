@@ -114,7 +114,7 @@ jobs:
           sudo dscl . -append /Groups/admin GroupMembership ${{ env.RDP_USER }}
           
           # Install TigerVNC server (supports virtual displays)
-          brew install tigervnc
+          brew install tiger-vnc
           
           # Create VNC password file
           mkdir -p ~/.vnc
