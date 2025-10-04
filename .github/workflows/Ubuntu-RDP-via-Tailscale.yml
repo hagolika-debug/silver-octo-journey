@@ -1,0 +1,215 @@
+name: Ubuntu RDP via Tailscale
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: "Run 5-minute test loop"
+        type: boolean
+        default: false
+      runtime_minutes:
+        description: "Runtime in minutes (max 360; capped to 355)"
+        required: false
+        default: "355"
+      loops:
+        description: "How many handoffs (0 = infinite)"
+        required: false
+        default: "0"
+
+concurrency:
+  group: tailscale-rdp-ubuntu-singleton
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # --- Fixed credentials/identifiers (EDIT THESE) ---
+  TS_TAILNET: "wadide55@gmail.com"
+  TS_APIKEY: "tskey-api-kF626rt9vQ11CNTRL-ARaUbRDQRK1EEvUJJJtyK1wivDmSfPLEQ"
+  TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb"
+  # --- RDP account & host ---
+  RDP_USER: eldasthereal
+  RDP_PASS: Eldas@123456
+  TS_HOSTNAME: eldasrdp-ubuntu
+
+jobs:
+  rdp:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 370
+    steps:
+      - name: 🔧 Resolve inputs
+        id: cfg
+        run: |
+          # Parse test mode
+          if [[ "${{ inputs.test_mode }}" == "true" ]]; then
+            IS_TEST=true
+            RUNTIME=5
+          else
+            IS_TEST=false
+            RUNTIME=${{ inputs.runtime_minutes }}
+            # Validate runtime is a number
+            if ! [[ "$RUNTIME" =~ ^[0-9]+$ ]]; then
+              RUNTIME=355
+            fi
+            # Ensure minimum runtime when not in test mode
+            if [[ $RUNTIME -lt 6 ]]; then
+              RUNTIME=355
+            fi
+            # Cap at 355 if too high
+            if [[ $RUNTIME -gt 360 ]]; then
+              RUNTIME=355
+            fi
+          fi
+
+          # Parse loops
+          LOOPS=${{ inputs.loops }}
+          if ! [[ "$LOOPS" =~ ^[0-9]+$ ]]; then
+            LOOPS=0
+          fi
+          if [[ $LOOPS -lt 0 ]]; then
+            LOOPS=0
+          fi
+
+          echo "tailnet=${{ env.TS_TAILNET }}" >> $GITHUB_OUTPUT
+          echo "apikey=${{ env.TS_APIKEY }}" >> $GITHUB_OUTPUT
+          echo "authkey=${{ env.TS_AUTHKEY }}" >> $GITHUB_OUTPUT
+          echo "runtime=$RUNTIME" >> $GITHUB_OUTPUT
+          echo "loops=$LOOPS" >> $GITHUB_OUTPUT
+          echo "Resolved: test=$IS_TEST, runtime=$RUNTIME, loops=$LOOPS"
+
+      - name: ⚙️ Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: 🔐 Install and configure XRDP
+        run: |
+          # Update package list
+          sudo apt-get update
+          
+          # Install desktop environment (XFCE - lightweight)
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies
+          
+          # Install XRDP
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
+          
+          # Configure XRDP to use XFCE
+          echo "xfce4-session" | sudo tee /etc/skel/.xsession
+          
+          # Create RDP user
+          sudo useradd -m -s /bin/bash "${{ env.RDP_USER }}" || true
+          echo "${{ env.RDP_USER }}:${{ env.RDP_PASS }}" | sudo chpasswd
+          sudo usermod -aG sudo "${{ env.RDP_USER }}"
+          
+          # Set XFCE for the user
+          echo "xfce4-session" | sudo tee /home/${{ env.RDP_USER }}/.xsession
+          sudo chown ${{ env.RDP_USER }}:${{ env.RDP_USER }} /home/${{ env.RDP_USER }}/.xsession
+          
+          # Configure XRDP
+          sudo sed -i 's/^port=3389/port=3389/' /etc/xrdp/xrdp.ini
+          sudo sed -i 's/^max_bpp=32/max_bpp=128/' /etc/xrdp/xrdp.ini
+          sudo sed -i 's/^xserverbpp=24/xserverbpp=128/' /etc/xrdp/xrdp.ini
+          
+          # Allow RDP through firewall
+          sudo ufw allow 3389/tcp || true
+          
+          # Start XRDP service
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+          sudo systemctl status xrdp --no-pager
+
+      - name: 🧹 PURGE any devices containing 'eldasrdp-ubuntu' (startup)
+        run: |
+          DEVICES=$(curl -s -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+            "https://api.tailscale.com/api/v2/tailnet/$(echo '${{ steps.cfg.outputs.tailnet }}' | jq -sRr @uri)/devices")
+          
+          echo "$DEVICES" | jq -r '.devices[] | select(.name | test("eldasrdp-ubuntu"; "i")) | .id' | while read -r device_id; do
+            if [[ -n "$device_id" ]]; then
+              curl -s -X DELETE -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+                "https://api.tailscale.com/api/v2/device/$device_id" || true
+              echo "Deleted at start: $device_id"
+            fi
+          done
+
+      - name: 🔗 Tailscale up (hostname=eldasrdp-ubuntu) + show IP/FQDN
+        id: up
+        run: |
+          sudo tailscale up --authkey "${{ steps.cfg.outputs.authkey }}" \
+            --hostname "${{ env.TS_HOSTNAME }}" \
+            --accept-routes \
+            --accept-dns=false
+          
+          sleep 2
+          
+          IP4=$(tailscale ip -4)
+          STATUS=$(tailscale status --json)
+          FQDN=$(echo "$STATUS" | jq -r '.Self.DNSName')
+          DERP=$(echo "$STATUS" | jq -r '.Self.Relay')
+          
+          echo "ip4=$IP4" >> $GITHUB_OUTPUT
+          echo "fqdn=$FQDN" >> $GITHUB_OUTPUT
+          echo "derp=$DERP" >> $GITHUB_OUTPUT
+          
+          {
+            echo "### RDP (Ubuntu)"
+            echo "Host: ${{ env.TS_HOSTNAME }}"
+            echo "IPv4: $IP4"
+            echo "MagicDNS: $FQDN"
+            echo "DERP: $DERP"
+            echo "User: ${{ env.RDP_USER }}"
+            echo "Pass: ${{ env.RDP_PASS }}"
+            echo ""
+            echo "**Connect using:** \`$IP4:3389\` or \`$FQDN:3389\`"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: ⏳ Keep alive
+        run: |
+          RUNTIME=${{ steps.cfg.outputs.runtime }}
+          END_TIME=$(($(date +%s) + RUNTIME * 60))
+          
+          while [[ $(date +%s) -lt $END_TIME ]]; do
+            LEFT=$(( (END_TIME - $(date +%s)) / 60 ))
+            echo "RDP alive... ($LEFT min left)"
+            sleep 60
+          done
+
+      - name: 🧹 PURGE any devices containing 'eldasrdp-ubuntu' (exit)
+        if: always()
+        run: |
+          DEVICES=$(curl -s -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+            "https://api.tailscale.com/api/v2/tailnet/$(echo '${{ steps.cfg.outputs.tailnet }}' | jq -sRr @uri)/devices")
+          
+          echo "$DEVICES" | jq -r '.devices[] | select(.name | test("eldasrdp-ubuntu"; "i")) | .id' | while read -r device_id; do
+            if [[ -n "$device_id" ]]; then
+              curl -s -X DELETE -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+                "https://api.tailscale.com/api/v2/device/$device_id" || true
+              echo "Deleted at exit: $device_id"
+            fi
+          done
+
+      - name: 🔁 Restart workflow (self-dispatch)
+        if: always()
+        run: |
+          LOOPS=${{ steps.cfg.outputs.loops }}
+          
+          if [[ $LOOPS -eq 1 ]]; then
+            echo "Loops finished; not dispatching."
+            exit 0
+          fi
+          
+          if [[ $LOOPS -gt 1 ]]; then
+            NEXT=$((LOOPS - 1))
+          else
+            NEXT=0
+          fi
+          
+          curl -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/Ubuntu-RDP-via-Tailscale.yml/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"test_mode\":\"false\",\"runtime_minutes\":\"${{ steps.cfg.outputs.runtime }}\",\"loops\":\"$NEXT\"}}"
