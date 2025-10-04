@@ -83,19 +83,18 @@ jobs:
           echo "loops=$LOOPS" >> $GITHUB_OUTPUT
           echo "Resolved: test=$IS_TEST, runtime=$RUNTIME, loops=$LOOPS"
 
-      - name: ⚙️ Install Tailscale
+      - name: ⚙️ Install Tailscale (open source)
         run: |
-          # Download and install Tailscale for macOS
-          curl -L -o /tmp/tailscale.pkg https://pkgs.tailscale.com/stable/Tailscale-1.88.3-macos.pkg
-          sudo installer -pkg /tmp/tailscale.pkg -target /
+          # Install Tailscale using Homebrew (open source method)
+          brew install tailscale
           
-          # Start Tailscale daemon
-          sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale install-system-daemon
+          # Start tailscaled daemon in background
+          sudo tailscaled install-system-daemon
           
-          # Wait for daemon to start
-          sleep 5
+          # Wait for daemon to be ready
+          sleep 3
           
-          echo "Tailscale installed successfully"
+          echo "Tailscale daemon started"
 
       - name: 🔐 Enable Screen Sharing (VNC/RDP)
         run: |
@@ -151,8 +150,8 @@ jobs:
       - name: 🔗 Tailscale up + show IP/FQDN
         id: up
         run: |
-          # Start Tailscale daemon
-          sudo /Applications/Tailscale.app/Contents/MacOS/Tailscale up \
+          # Connect to Tailscale using CLI
+          sudo tailscale up \
             --authkey "${{ steps.cfg.outputs.authkey }}" \
             --hostname "${{ env.TS_HOSTNAME }}" \
             --accept-routes \
@@ -161,8 +160,8 @@ jobs:
           sleep 3
           
           # Get Tailscale IP
-          IP4=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4)
-          STATUS=$(/Applications/Tailscale.app/Contents/MacOS/Tailscale status --json)
+          IP4=$(tailscale ip -4)
+          STATUS=$(tailscale status --json)
           FQDN=$(echo "$STATUS" | jq -r '.Self.DNSName')
           DERP=$(echo "$STATUS" | jq -r '.Self.Relay')
           
