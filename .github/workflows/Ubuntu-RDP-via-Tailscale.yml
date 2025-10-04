@@ -128,13 +128,17 @@ jobs:
           DEVICES=$(curl -s -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
             "https://api.tailscale.com/api/v2/tailnet/$(echo '${{ steps.cfg.outputs.tailnet }}' | jq -sRr @uri)/devices")
           
-          echo "$DEVICES" | jq -r '.devices[] | select(.name | test("eldasrdp-ubuntu"; "i")) | .id' | while read -r device_id; do
-            if [[ -n "$device_id" ]]; then
-              curl -s -X DELETE -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
-                "https://api.tailscale.com/api/v2/device/$device_id" || true
-              echo "Deleted at start: $device_id"
-            fi
-          done
+          if [[ -n "$DEVICES" ]] && echo "$DEVICES" | jq -e '.devices' > /dev/null 2>&1; then
+            echo "$DEVICES" | jq -r '.devices[]? | select(.name | test("eldasrdp-ubuntu"; "i")) | .id' | while read -r device_id; do
+              if [[ -n "$device_id" ]]; then
+                curl -s -X DELETE -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+                  "https://api.tailscale.com/api/v2/device/$device_id" || true
+                echo "Deleted at start: $device_id"
+              fi
+            done
+          else
+            echo "No devices found or API error - skipping purge"
+          fi
 
       - name: 🔗 Tailscale up (hostname=eldasrdp-ubuntu) + show IP/FQDN
         id: up
@@ -184,13 +188,17 @@ jobs:
           DEVICES=$(curl -s -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
             "https://api.tailscale.com/api/v2/tailnet/$(echo '${{ steps.cfg.outputs.tailnet }}' | jq -sRr @uri)/devices")
           
-          echo "$DEVICES" | jq -r '.devices[] | select(.name | test("eldasrdp-ubuntu"; "i")) | .id' | while read -r device_id; do
-            if [[ -n "$device_id" ]]; then
-              curl -s -X DELETE -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
-                "https://api.tailscale.com/api/v2/device/$device_id" || true
-              echo "Deleted at exit: $device_id"
-            fi
-          done
+          if [[ -n "$DEVICES" ]] && echo "$DEVICES" | jq -e '.devices' > /dev/null 2>&1; then
+            echo "$DEVICES" | jq -r '.devices[]? | select(.name | test("eldasrdp-ubuntu"; "i")) | .id' | while read -r device_id; do
+              if [[ -n "$device_id" ]]; then
+                curl -s -X DELETE -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
+                  "https://api.tailscale.com/api/v2/device/$device_id" || true
+                echo "Deleted at exit: $device_id"
+              fi
+            done
+          else
+            echo "No devices found or API error - skipping purge"
+          fi
 
       - name: 🔁 Restart workflow (self-dispatch)
         if: always()
