@@ -116,14 +116,18 @@ jobs:
           # Install TigerVNC server (supports virtual displays)
           brew install tiger-vnc
           
+          # Set up paths for TigerVNC
+          VNC_BIN="/opt/homebrew/bin"
+          export PATH="$VNC_BIN:$PATH"
+          
           # Create VNC password file
           mkdir -p ~/.vnc
-          echo "${{ env.RDP_PASS }}" | vncpasswd -f > ~/.vnc/passwd
+          echo "${{ env.RDP_PASS }}" | $VNC_BIN/vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
           
           # Start VNC server with virtual display
           # This creates a virtual framebuffer that doesn't need a physical display
-          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth -PasswordFile ~/.vnc/passwd &
+          $VNC_BIN/vncserver :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth -PasswordFile ~/.vnc/passwd &
           
           # Wait for VNC server to start
           sleep 5
@@ -131,11 +135,13 @@ jobs:
           # Check if VNC is running
           if pgrep -f "Xvnc" > /dev/null; then
             echo "VNC server started successfully on display :1 (port 5901)"
+            echo "VNC server running on port 5901"
           else
             echo "Warning: VNC server may not have started properly"
+            # Show logs for debugging
+            cat ~/.vnc/*.log 2>/dev/null || echo "No VNC logs found"
           fi
           
-          echo "VNC server running on port 5901"
           echo "Connect using: <tailscale-ip>:5901"
 
       - name: 🧹 PURGE any devices containing hostname (startup)
