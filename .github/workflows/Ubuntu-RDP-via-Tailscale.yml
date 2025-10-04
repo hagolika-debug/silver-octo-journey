@@ -92,8 +92,8 @@ jobs:
           # Update package list
           sudo apt-get update
           
-          # Install LXDE desktop environment (lightweight and fast)
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y lxde-core lxde
+          # Install KDE Plasma desktop environment (modern and beautiful)
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y kde-plasma-desktop
           
           # Install XRDP
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
@@ -107,21 +107,28 @@ jobs:
           sudo mkdir -p /home/${{ env.RDP_USER }}/.config
           sudo chown -R ${{ env.RDP_USER }}:${{ env.RDP_USER }} /home/${{ env.RDP_USER }}
           
-          # Configure XRDP startwm.sh to use LXDE
+          # Configure XRDP startwm.sh to use KDE Plasma
           sudo bash -c 'cat > /etc/xrdp/startwm.sh' << 'STARTWM'
           #!/bin/sh
           if [ -r /etc/default/locale ]; then
             . /etc/default/locale
             export LANG LANGUAGE
           fi
-          startlxde
+          
+          # Set KDE environment variables
+          export XDG_SESSION_DESKTOP=KDE
+          export XDG_CURRENT_DESKTOP=KDE
+          export DESKTOP_SESSION=plasma
+          
+          # Start KDE Plasma session
+          exec startplasma-x11
           STARTWM
           
           sudo chmod +x /etc/xrdp/startwm.sh
           
-          # Configure XRDP settings for better performance
-          sudo sed -i 's/^max_bpp=32/max_bpp=24/' /etc/xrdp/xrdp.ini
-          sudo sed -i 's/^xserverbpp=24/xserverbpp=24/' /etc/xrdp/xrdp.ini
+          # Configure XRDP settings
+          sudo sed -i 's/^max_bpp=32/max_bpp=128/' /etc/xrdp/xrdp.ini
+          sudo sed -i 's/^xserverbpp=24/xserverbpp=128/' /etc/xrdp/xrdp.ini
           
           # Add user to ssl-cert group
           sudo adduser xrdp ssl-cert
@@ -138,15 +145,19 @@ jobs:
       - name: 🧹 PURGE any devices containing hostname (startup)
         run: |
           HOSTNAME="${{ env.TS_HOSTNAME }}"
+          echo "Looking for devices matching: $HOSTNAME"
           DEVICES=$(curl -s -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
             "https://api.tailscale.com/api/v2/tailnet/$(echo '${{ steps.cfg.outputs.tailnet }}' | jq -sRr @uri)/devices")
           
           if [[ -n "$DEVICES" ]] && echo "$DEVICES" | jq -e '.devices' > /dev/null 2>&1; then
-            echo "$DEVICES" | jq -r --arg hostname "$HOSTNAME" '.devices[]? | select((.name | test($hostname; "i")) or (.hostname | test($hostname; "i"))) | .id' | while read -r device_id; do
+            # Match hostname with optional suffix (e.g., rdp-ubuntu, rdp-ubuntu-1, rdp-ubuntu-2)
+            echo "$DEVICES" | jq -r --arg hostname "$HOSTNAME" '.devices[]? | select((.name | test("^" + $hostname + "(-[0-9]+)?$"; "i")) or (.hostname | test("^" + $hostname + "(-[0-9]+)?$"; "i"))) | "\(.id) - \(.name // .hostname)"' | while read -r device_info; do
+              device_id=$(echo "$device_info" | cut -d' ' -f1)
+              device_name=$(echo "$device_info" | cut -d'-' -f2-)
               if [[ -n "$device_id" ]]; then
+                echo "Deleting device: $device_name (ID: $device_id)"
                 curl -s -X DELETE -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
                   "https://api.tailscale.com/api/v2/device/$device_id" || true
-                echo "Deleted at start: $device_id"
               fi
             done
           else
@@ -199,15 +210,19 @@ jobs:
         if: always()
         run: |
           HOSTNAME="${{ env.TS_HOSTNAME }}"
+          echo "Looking for devices matching: $HOSTNAME"
           DEVICES=$(curl -s -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
             "https://api.tailscale.com/api/v2/tailnet/$(echo '${{ steps.cfg.outputs.tailnet }}' | jq -sRr @uri)/devices")
           
           if [[ -n "$DEVICES" ]] && echo "$DEVICES" | jq -e '.devices' > /dev/null 2>&1; then
-            echo "$DEVICES" | jq -r --arg hostname "$HOSTNAME" '.devices[]? | select((.name | test($hostname; "i")) or (.hostname | test($hostname; "i"))) | .id' | while read -r device_id; do
+            # Match hostname with optional suffix (e.g., rdp-ubuntu, rdp-ubuntu-1, rdp-ubuntu-2)
+            echo "$DEVICES" | jq -r --arg hostname "$HOSTNAME" '.devices[]? | select((.name | test("^" + $hostname + "(-[0-9]+)?$"; "i")) or (.hostname | test("^" + $hostname + "(-[0-9]+)?$"; "i"))) | "\(.id) - \(.name // .hostname)"' | while read -r device_info; do
+              device_id=$(echo "$device_info" | cut -d' ' -f1)
+              device_name=$(echo "$device_info" | cut -d'-' -f2-)
               if [[ -n "$device_id" ]]; then
+                echo "Deleting device: $device_name (ID: $device_id)"
                 curl -s -X DELETE -H "Authorization: Bearer ${{ steps.cfg.outputs.apikey }}" \
                   "https://api.tailscale.com/api/v2/device/$device_id" || true
-                echo "Deleted at exit: $device_id"
               fi
             done
           else
