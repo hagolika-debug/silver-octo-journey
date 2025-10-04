@@ -92,73 +92,30 @@ jobs:
           # Update package list
           sudo apt-get update
           
-          # Install desktop environment (XFCE - lightweight)
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies dbus-x11 xfce4-terminal
+          # Install MATE desktop environment (more reliable with XRDP than XFCE)
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-mate-desktop
           
           # Install XRDP
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
           
-          # Create RDP user first
+          # Create RDP user
           sudo useradd -m -s /bin/bash "${{ env.RDP_USER }}" || true
           echo "${{ env.RDP_USER }}:${{ env.RDP_PASS }}" | sudo chpasswd
           sudo usermod -aG sudo "${{ env.RDP_USER }}"
           
-          # Create proper XFCE config directory
-          sudo mkdir -p /home/${{ env.RDP_USER }}/.config/xfce4
+          # Configure XRDP to use MATE
+          sudo sed -i.bak '/fi/a #xrdp multiple users configuration \n mate-session \n' /etc/xrdp/startwm.sh
           
-          # Configure XRDP session startup script
-          sudo bash -c "cat > /home/${{ env.RDP_USER }}/.xsession" << 'EOF'
-          #!/bin/bash
-          # Unset problematic session variables
-          unset DBUS_SESSION_BUS_ADDRESS
-          unset XDG_RUNTIME_DIR
-          
-          # Set proper environment
-          export XDG_SESSION_TYPE=x11
-          export XDG_CURRENT_DESKTOP=XFCE
-          export XDG_CONFIG_DIRS=/etc/xdg
-          export XDG_DATA_DIRS=/usr/share:/usr/local/share
-          
-          # Start D-Bus if not running
-          if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
-            eval $(dbus-launch --sh-syntax --exit-with-session)
-          fi
-          
-          # Start XFCE session
-          exec startxfce4
-          EOF
-          
+          # Create .xsession for the user
+          echo 'mate-session' | sudo tee /home/${{ env.RDP_USER }}/.xsession
           sudo chmod +x /home/${{ env.RDP_USER }}/.xsession
-          sudo chown -R ${{ env.RDP_USER }}:${{ env.RDP_USER }} /home/${{ env.RDP_USER }}
-          
-          # Configure XRDP to use XFCE
-          sudo bash -c "cat > /etc/xrdp/startwm.sh" << 'EOF'
-          #!/bin/sh
-          # xrdp X session start script (c) 2015, 2017, 2021 mirabilos
-          # published under The MirOS Licence
-          
-          # Rely on /etc/profile to set PATH correctly
-          if [ -r /etc/profile ]; then
-            . /etc/profile
-          fi
-          
-          # Use user's .xsession if it exists
-          if [ -r ~/.xsession ]; then
-            exec ~/.xsession
-          fi
-          
-          # Fallback to XFCE
-          exec startxfce4
-          EOF
-          
-          sudo chmod +x /etc/xrdp/startwm.sh
+          sudo chown ${{ env.RDP_USER }}:${{ env.RDP_USER }} /home/${{ env.RDP_USER }}/.xsession
           
           # Configure XRDP settings
-          sudo sed -i 's/^port=3389/port=3389/' /etc/xrdp/xrdp.ini
           sudo sed -i 's/^max_bpp=32/max_bpp=128/' /etc/xrdp/xrdp.ini
           sudo sed -i 's/^xserverbpp=24/xserverbpp=128/' /etc/xrdp/xrdp.ini
           
-          # Add user to ssl-cert group for XRDP
+          # Add user to ssl-cert group
           sudo adduser xrdp ssl-cert
           sudo adduser "${{ env.RDP_USER }}" ssl-cert
           
