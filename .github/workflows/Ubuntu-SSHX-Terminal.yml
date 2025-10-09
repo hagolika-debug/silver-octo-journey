@@ -26,7 +26,7 @@ defaults:
 
 jobs:
   terminal:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 370
     steps:
       - name: 🔧 Resolve inputs
