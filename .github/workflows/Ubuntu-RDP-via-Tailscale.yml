@@ -174,8 +174,8 @@ jobs:
           fi
           
           # Create .xsession file for the RDP user to use LXQt
-          sudo -u "$RDP_USER" bash -c 'echo "startlxqt" > /home/$RDP_USER/.xsession'
-          sudo chmod +x /home/$RDP_USER/.xsession
+          sudo -u "$RDP_USER" bash -c "echo 'startlxqt' > /home/$RDP_USER/.xsession"
+          sudo chmod +x "/home/$RDP_USER/.xsession"
           
           echo "xrdp configured successfully"
 
