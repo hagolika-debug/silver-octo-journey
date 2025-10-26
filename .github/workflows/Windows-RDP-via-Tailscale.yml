@@ -164,57 +164,58 @@ jobs:
 
       - name: 🕐 Create Taskbar Timer Script
         run: |
-          $timerScript = @'
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -AssemblyName System.Drawing
-
-          $mins = [int]$args[0]
-          $endTime = (Get-Date).AddMinutes($mins)
-
-          $form = New-Object System.Windows.Forms.Form
-          $form.Text = "RDP Timer"
-          $form.Size = New-Object System.Drawing.Size(250, 80)
-          $form.StartPosition = "Manual"
-          $form.Location = New-Object System.Drawing.Point(10, ([System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Height - 100))
-          $form.FormBorderStyle = "FixedToolWindow"
-          $form.TopMost = $true
-          $form.ShowInTaskbar = $true
-
-          $label = New-Object System.Windows.Forms.Label
-          $label.Location = New-Object System.Drawing.Point(10, 15)
-          $label.Size = New-Object System.Drawing.Size(220, 40)
-          $label.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
-          $label.TextAlign = "MiddleCenter"
-          $form.Controls.Add($label)
-
-          $timer = New-Object System.Windows.Forms.Timer
-          $timer.Interval = 1000
-          $timer.Add_Tick({
-              $remaining = $endTime - (Get-Date)
-              if ($remaining.TotalSeconds -le 0) {
-                  $label.Text = "Time''s Up!"
-                  $label.ForeColor = [System.Drawing.Color]::Red
-                  $timer.Stop()
-              } else {
-                  $hours = [int]$remaining.Hours
-                  $minutes = [int]$remaining.Minutes
-                  $seconds = [int]$remaining.Seconds
-                  $label.Text = "{0:D2}:{1:D2}:{2:D2} remaining" -f $hours, $minutes, $seconds
-                  
-                  if ($remaining.TotalMinutes -le 10) {
-                      $label.ForeColor = [System.Drawing.Color]::Red
-                  } elseif ($remaining.TotalMinutes -le 30) {
-                      $label.ForeColor = [System.Drawing.Color]::Orange
-                  } else {
-                      $label.ForeColor = [System.Drawing.Color]::Green
-                  }
-              }
-          })
-          $timer.Start()
-
-          [void]$form.ShowDialog()
-'@
-          $timerScript | Out-File -FilePath "$env:TEMP\RDPTimer.ps1" -Encoding UTF8
+          # Build timer script as an array of lines and write to file to avoid PowerShell here-strings (which break YAML indentation)
+          $lines = @(
+            'Add-Type -AssemblyName System.Windows.Forms',
+            'Add-Type -AssemblyName System.Drawing',
+            '',
+            '$mins = [int]$args[0]',
+            '$endTime = (Get-Date).AddMinutes($mins)',
+            '',
+            '$form = New-Object System.Windows.Forms.Form',
+            '$form.Text = "RDP Timer"',
+            '$form.Size = New-Object System.Drawing.Size(250, 80)',
+            '$form.StartPosition = "Manual"',
+            '$form.Location = New-Object System.Drawing.Point(10, ([System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Height - 100))',
+            '$form.FormBorderStyle = "FixedToolWindow"',
+            '$form.TopMost = $true',
+            '$form.ShowInTaskbar = $true',
+            '',
+            '$label = New-Object System.Windows.Forms.Label',
+            '$label.Location = New-Object System.Drawing.Point(10, 15)',
+            '$label.Size = New-Object System.Drawing.Size(220, 40)',
+            '$label.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)',
+            '$label.TextAlign = "MiddleCenter"',
+            '$form.Controls.Add($label)',
+            '',
+            '$timer = New-Object System.Windows.Forms.Timer',
+            '$timer.Interval = 1000',
+            '$timer.Add_Tick({',
+            '    $remaining = $endTime - (Get-Date)',
+            '    if ($remaining.TotalSeconds -le 0) {',
+            '        $label.Text = "Time''s Up!"',
+            '        $label.ForeColor = [System.Drawing.Color]::Red',
+            '        $timer.Stop()',
+            '    } else {',
+            '        $hours = [int]$remaining.Hours',
+            '        $minutes = [int]$remaining.Minutes',
+            '        $seconds = [int]$remaining.Seconds',
+            '        $label.Text = "{0:D2}:{1:D2}:{2:D2} remaining" -f $hours, $minutes, $seconds',
+            '',
+            '        if ($remaining.TotalMinutes -le 10) {',
+            '            $label.ForeColor = [System.Drawing.Color]::Red',
+            '        } elseif ($remaining.TotalMinutes -le 30) {',
+            '            $label.ForeColor = [System.Drawing.Color]::Orange',
+            '        } else {',
+            '            $label.ForeColor = [System.Drawing.Color]::Green',
+            '        }',
+            '    }',
+            '})',
+            '$timer.Start()',
+            '',
+            '[void]$form.ShowDialog()'
+          )
+          ($lines -join "`r`n") | Out-File -FilePath "$env:TEMP\RDPTimer.ps1" -Encoding UTF8
 
       - name: 🚀 Start Timer in Background
         run: |
