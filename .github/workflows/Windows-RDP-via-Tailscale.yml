@@ -36,7 +36,7 @@ env:
   TS_AUTHKEY: "PLACEHOLDER_TS_AUTHKEY"   # move to secrets.TS_AUTHKEY
   # --- RDP account & host ---
   RDP_USER: rdpuser
-  RDP_PASS: rdprdp@12345
+  RDP_PASS: "rdprdp@12345"
   TS_HOSTNAME: rdp-windows
 
 jobs:
@@ -219,8 +219,9 @@ jobs:
       - name: 🚀 Start Timer in Background
         run: |
           $mins = [int]"${{ steps.cfg.outputs.runtime }}"
-          # Start hidden powershell to show the WinForms timer
-          Start-Process -FilePath "powershell" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$env:TEMP\RDPTimer.ps1`" $mins" -WindowStyle Hidden
+          # Start hidden powershell to show the WinForms timer using an ArgumentList array (avoids complex quoting)
+          $args = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", "$env:TEMP\RDPTimer.ps1", $mins)
+          Start-Process -FilePath "powershell" -ArgumentList $args -WindowStyle Hidden
 
       - name: ⏳ Keep alive
         run: |
