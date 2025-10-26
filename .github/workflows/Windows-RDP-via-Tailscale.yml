@@ -29,10 +29,11 @@ defaults:
     shell: pwsh
 
 env:
-  # --- Fixed credentials/identifiers (EDIT THESE) ---
+  # --- Use repository secrets instead of in-repo plaintext for these values ---
+  # If you keep them here for testing, replace them later with secrets.* references.
   TS_TAILNET: "wadide55@gmail.com"
-  TS_APIKEY: "tskey-api-kF626rt9vQ11CNTRL-ARaUbRDQRK1EEvUJJJtyK1wivDmSfPLEQ"     # Tailscale API key (no 'Bearer')
-  TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb"            # Tailscale authkey
+  TS_APIKEY: "PLACEHOLDER_TS_APIKEY"     # move to secrets.TS_APIKEY
+  TS_AUTHKEY: "PLACEHOLDER_TS_AUTHKEY"   # move to secrets.TS_AUTHKEY
   # --- RDP account & host ---
   RDP_USER: rdpuser
   RDP_PASS: rdprdp@12345
@@ -50,7 +51,9 @@ jobs:
           RAW_RUNTIME:  ${{ inputs.runtime_minutes || '355' }}
           RAW_LOOPS:    ${{ inputs.loops || '0' }}
         run: |
-          function ToIntOr($v, $def){ if("$v" -match '^\d+$'){[int]$v}else{[int]$def} }
+          function ToIntOr($v, $def){
+            if("$v" -match '^\d+$'){ return [int]$v } else { return [int]$def }
+          }
 
           # Fixed values from env
           $tailnet = $env:TS_TAILNET
@@ -113,17 +116,30 @@ jobs:
           $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
           $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
           $hostname = "${{ env.TS_HOSTNAME }}"
-          $match = { param($d)
-            ($d.name -match "(?i)$hostname") -or ($d.hostname -match "(?i)$hostname") -or ($d.DNSName -match "(?i)$hostname")
+
+          $match = {
+            param($d)
+            $nm = if ($d.PSObject.Properties['name']) { $d.name } else { $null }
+            $hn = if ($d.PSObject.Properties['hostname']) { $d.hostname } else { $null }
+            $dns = if ($d.PSObject.Properties['DNSName']) { $d.DNSName } else { $null }
+
+            return (
+              ($nm -and ($nm -match "(?i)$hostname")) -or
+              ($hn -and ($hn -match "(?i)$hostname")) -or
+              ($dns -and ($dns -match "(?i)$hostname"))
+            )
           }
+
           try {
             $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
             foreach ($d in $resp.devices) {
               if (& $match $d) {
                 try {
-                  Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/device/{0}" -f $d.id) | Out-Null
+                  Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/devices/{0}" -f $d.id) | Out-Null
                   Write-Host "Deleted at start: $($d.name)"
-                } catch {}
+                } catch {
+                  Write-Warning "Failed to delete device $($d.id): $_"
+                }
               }
             }
           } catch { Write-Warning "Startup purge failed: $_" }
@@ -138,8 +154,8 @@ jobs:
 
           $ip4 = (& $ts ip -4 | Select-Object -First 1)
           $status = & $ts status --json | ConvertFrom-Json
-          $fqdn = $status.Self.DNSName
-          $derp = $status.Self.DERP
+          $fqdn = if ($status.Self.PSObject.Properties['DNSName']) { $status.Self.DNSName } else { $null }
+          $derp = if ($status.Self.PSObject.Properties['DERP']) { $status.Self.DERP } else { $null }
           "ip4=$ip4"   | Out-File -Append $env:GITHUB_OUTPUT
           "fqdn=$fqdn" | Out-File -Append $env:GITHUB_OUTPUT
           "derp=$derp" | Out-File -Append $env:GITHUB_OUTPUT
@@ -176,7 +192,7 @@ jobs:
           $timer.Add_Tick({
               $remaining = $endTime - (Get-Date)
               if ($remaining.TotalSeconds -le 0) {
-                  $label.Text = "Time's Up!"
+                  $label.Text = "Time''s Up!"
                   $label.ForeColor = [System.Drawing.Color]::Red
                   $timer.Stop()
               } else {
@@ -203,7 +219,8 @@ jobs:
       - name: 🚀 Start Timer in Background
         run: |
           $mins = [int]"${{ steps.cfg.outputs.runtime }}"
-          Start-Process powershell -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$env:TEMP\RDPTimer.ps1`" $mins" -WindowStyle Hidden
+          # Start hidden powershell to show the WinForms timer
+          Start-Process -FilePath "powershell" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$env:TEMP\RDPTimer.ps1`" $mins" -WindowStyle Hidden
 
       - name: ⏳ Keep alive
         run: |
@@ -221,17 +238,30 @@ jobs:
           $hdr = @{ Authorization = "Bearer ${{ steps.cfg.outputs.apikey }}" }
           $tn  = [uri]::EscapeDataString("${{ steps.cfg.outputs.tailnet }}")
           $hostname = "${{ env.TS_HOSTNAME }}"
-          $match = { param($d)
-            ($d.name -match "(?i)$hostname") -or ($d.hostname -match "(?i)$hostname") -or ($d.DNSName -match "(?i)$hostname")
+
+          $match = {
+            param($d)
+            $nm = if ($d.PSObject.Properties['name']) { $d.name } else { $null }
+            $hn = if ($d.PSObject.Properties['hostname']) { $d.hostname } else { $null }
+            $dns = if ($d.PSObject.Properties['DNSName']) { $d.DNSName } else { $null }
+
+            return (
+              ($nm -and ($nm -match "(?i)$hostname")) -or
+              ($hn -and ($hn -match "(?i)$hostname")) -or
+              ($dns -and ($dns -match "(?i)$hostname"))
+            )
           }
+
           try {
             $resp = Invoke-RestMethod -Method GET -Headers $hdr -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices"
             foreach ($d in $resp.devices) {
               if (& $match $d) {
                 try {
-                  Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/device/{0}" -f $d.id) | Out-Null
+                  Invoke-RestMethod -Method DELETE -Headers $hdr -Uri ("https://api.tailscale.com/api/v2/devices/{0}" -f $d.id) | Out-Null
                   Write-Host "Deleted at exit: $($d.name)"
-                } catch {}
+                } catch {
+                  Write-Warning "Failed to delete device $($d.id): $_"
+                }
               }
             }
           } catch { Write-Warning "Exit purge failed: $_" }
