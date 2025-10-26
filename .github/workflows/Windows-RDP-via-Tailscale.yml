@@ -32,8 +32,8 @@ env:
   # --- Use repository secrets instead of in-repo plaintext for these values ---
   # If you keep them here for testing, replace them later with secrets.* references.
   TS_TAILNET: "wadide55@gmail.com"
-  TS_APIKEY: "PLACEHOLDER_TS_APIKEY"     # move to secrets.TS_APIKEY
-  TS_AUTHKEY: "PLACEHOLDER_TS_AUTHKEY"   # move to secrets.TS_AUTHKEY
+  TS_APIKEY: "tskey-api-kF626rt9vQ11CNTRL-ARaUbRDQRK1EEvUJJJtyK1wivDmSfPLEQ"     # Tailscale API key (no 'Bearer')
+  TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb" 
   # --- RDP account & host ---
   RDP_USER: rdpuser
   RDP_PASS: "rdprdp@12345"
