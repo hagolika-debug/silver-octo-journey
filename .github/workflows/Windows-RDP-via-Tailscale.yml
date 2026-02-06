@@ -31,8 +31,8 @@ defaults:
 env:
   # --- Fixed credentials/identifiers (EDIT THESE) ---
   TS_TAILNET: "wadide55@gmail.com"
-  TS_APIKEY: "tskey-api-kF626rt9vQ11CNTRL-ARaUbRDQRK1EEvUJJJtyK1wivDmSfPLEQ"     # Tailscale API key (no 'Bearer')
-  TS_AUTHKEY: "tskey-auth-kg1JajUh5H11CNTRL-i9kZ8H35AdeWUTScYtKhdeq3vpwPrgfsb"            # Tailscale authkey
+  TS_APIKEY: "tskey-api-kWyS6zRDm311CNTRL-FpH71sp2meju4su9HKx5ej1p6W53XAa4"     # Tailscale API key (no 'Bearer')
+  TS_AUTHKEY: "tskey-auth-kZtAZpeYBe11CNTRL-wHXnfLTigh1fk6dMXdL9h1KvgyUUMiKqN"            # Tailscale authkey
   # --- RDP account & host ---
   RDP_USER: rdpuser
   RDP_PASS: rdprdp@12345
