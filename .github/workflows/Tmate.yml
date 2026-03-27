@@ -21,7 +21,7 @@ jobs:
       run: |
         # Install SSH server
         sudo apt-get update
-        sudo apt-get install -y openssh-server curl
+        sudo apt-get install -y openssh-server curl jq
         
         # Configure SSH for password authentication
         sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
@@ -67,26 +67,45 @@ jobs:
         echo "NGROK_PID=$NGROK_PID" >> $GITHUB_ENV
         
         # Wait for ngrok to start
-        sleep 5
+        echo "Waiting for ngrok to establish tunnel..."
+        sleep 8
         
-        # Get the ngrok URL
-        for i in {1..10}; do
-          NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"[^"]*"' | grep tcp | cut -d'"' -f4)
-          if [ ! -z "$NGROK_URL" ]; then
+        # Get the ngrok URL with better error handling
+        echo "Fetching ngrok tunnel info..."
+        
+        # Try multiple times to get the URL
+        for i in {1..15}; do
+          echo "Attempt $i..."
+          RESPONSE=$(curl -s http://localhost:4040/api/tunnels)
+          echo "Response: $RESPONSE"
+          
+          NGROK_URL=$(echo $RESPONSE | jq -r '.tunnels[] | select(.proto=="tcp") | .public_url' 2>/dev/null)
+          
+          if [ ! -z "$NGROK_URL" ] && [ "$NGROK_URL" != "null" ]; then
+            echo "Found ngrok URL: $NGROK_URL"
             break
           fi
           sleep 2
         done
+        
+        if [ -z "$NGROK_URL" ] || [ "$NGROK_URL" == "null" ]; then
+          echo "Failed to get ngrok URL. Showing ngrok.log:"
+          cat ngrok.log
+          exit 1
+        fi
         
         echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
         
         # Extract host and port
         HOST=$(echo $NGROK_URL | sed 's/tcp:\/\///' | cut -d':' -f1)
         PORT=$(echo $NGROK_URL | sed 's/tcp:\/\///' | cut -d':' -f2)
+        
         echo "NGROK_HOST=$HOST" >> $GITHUB_ENV
         echo "NGROK_PORT=$PORT" >> $GITHUB_ENV
         
         echo "✅ Ngrok tunnel created"
+        echo "   Host: $HOST"
+        echo "   Port: $PORT"
         
     - name: Display HTTP Custom Connection String
       run: |
@@ -101,6 +120,7 @@ jobs:
         echo "🌐 Ngrok Public Endpoint:"
         echo "   Host: $NGROK_HOST"
         echo "   Port: $NGROK_PORT"
+        echo "   Full URL: tcp://$NGROK_HOST:$NGROK_PORT"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "📱 HTTP CUSTOM CONNECTION STRING:"
@@ -127,14 +147,17 @@ jobs:
         echo "• Copy the HTTP Custom string above exactly"
         echo "• Paste it in HTTP Custom app to connect"
         echo "• Session will auto-terminate after ${{ github.event.inputs.duration }} minutes"
+        echo ""
+        echo "💡 Ngrok provides a free subdomain automatically"
+        echo "   No custom domain needed - use the host above"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         
     - name: Display Ngrok Web Interface Info
       run: |
         echo ""
-        echo "🔍 Ngrok Inspection URL:"
+        echo "🔍 Monitor your tunnel at:"
         echo "   http://localhost:4040"
-        echo "   (For monitoring tunnel traffic)"
+        echo "   (Available in GitHub Actions logs only)"
         echo ""
         
     - name: Start Tmate (Backup Connection)
@@ -148,7 +171,8 @@ jobs:
         echo ""
         echo "🟢 SSH TUNNEL IS ACTIVE"
         echo ""
-        echo "Use the HTTP Custom string shown above to connect"
+        echo "Connection string: $NGROK_HOST:$NGROK_PORT@$SSH_USER:$SSH_PASS"
+        echo ""
         echo "Session will remain active for ${{ github.event.inputs.duration }} minutes"
         echo ""
         
@@ -166,9 +190,9 @@ jobs:
             echo "[$(date '+%H:%M:%S')] Session active - $REMAINING minutes remaining"
             
             # Show ngrok status
-            curl -s http://localhost:4040/api/tunnels > /dev/null 2>&1
-            if [ $? -eq 0 ]; then
-              echo "   ✅ Ngrok tunnel is operational"
+            TUNNEL_STATUS=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url' 2>/dev/null)
+            if [ ! -z "$TUNNEL_STATUS" ] && [ "$TUNNEL_STATUS" != "null" ]; then
+              echo "   ✅ Ngrok tunnel: $TUNNEL_STATUS"
             else
               echo "   ⚠️  Ngrok tunnel may be experiencing issues"
             fi
