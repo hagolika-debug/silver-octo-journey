@@ -47,109 +47,83 @@ jobs:
         echo "✅ SSH Server configured"
         echo "Username: runner"
         echo "Password: $PASSWORD"
-        
-    - name: Install and Setup Ngrok
+
+    - name: Create SSH Tunnel via Serveo
       run: |
-        # Download ngrok
-        cd /tmp
-        wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
-        tar xzf ngrok-v3-stable-linux-amd64.tgz
-        sudo mv ngrok /usr/local/bin/
-        
-        # Add your auth token
-        ngrok config add-authtoken 2tdyO3klTR5ndRfrTV0jBQqRA7y_3TJ5rChVMhNt87hdNLMYz
-        
-        echo "✅ Ngrok configured"
-        
-    - name: Create SSH Tunnel with Ngrok
-      run: |
-            # Start ngrok tunnel for SSH in background
-            ngrok tcp 22 --log=stdout > ngrok.log 2>&1 &
-            NGROK_PID=$!
-            echo "NGROK_PID=$NGROK_PID" >> $GITHUB_ENV
-    
-            echo "Waiting for ngrok to establish tunnel..."
-            sleep 15  # give ngrok more time to auth and connect
-    
-            # Show early log to catch auth/startup failures
-            echo "--- ngrok startup log ---"
-            cat ngrok.log || true
-            echo "-------------------------"
-    
-            echo "Fetching ngrok tunnel info..."
-            NGROK_URL=""
-    
-            for i in {1..20}; do
-              echo "Attempt $i..."
-    
-              # ✅ || true prevents curl failure from killing the step
-              RESPONSE=$(curl -s http://localhost:4040/api/tunnels || true)
-    
-              if [ ! -z "$RESPONSE" ]; then
-                echo "API Response: $RESPONSE"
-                NGROK_URL=$(echo "$RESPONSE" | grep -o '"public_url":"tcp://[^"]*"' | head -1 | sed 's/"public_url":"//' | sed 's/"//')
-              fi
-    
-              if [ ! -z "$NGROK_URL" ]; then
-                echo "Found ngrok URL: $NGROK_URL"
-                break
-              fi
-    
-              echo "Not ready yet, retrying in 3s..."
-              sleep 3
-            done
-    
-            if [ -z "$NGROK_URL" ]; then
-              echo "❌ Failed to get ngrok URL. Final ngrok log:"
-              cat ngrok.log
-              exit 1
-            fi
-    
-            echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
-    
-            HOST=$(echo $NGROK_URL | sed 's/tcp:\/\///' | cut -d':' -f1)
-            PORT=$(echo $NGROK_URL | sed 's/tcp:\/\///' | cut -d':' -f2)
-    
-            echo "NGROK_HOST=$HOST" >> $GITHUB_ENV
-            echo "NGROK_PORT=$PORT" >> $GITHUB_ENV
-    
-            echo "✅ Ngrok tunnel created"
-            echo "   Host: $HOST"
-            echo "   Port: $PORT"
-        
-    - name: Display HTTP Custom Connection String
+        # serveo.net — free TCP tunneling, no account needed, no install
+        ssh -o StrictHostKeyChecking=no \
+            -o ServerAliveInterval=60 \
+            -o ExitOnForwardFailure=yes \
+            -R 0:localhost:22 serveo.net \
+            > serveo.log 2>&1 &
+        SERVEO_PID=$!
+        echo "SERVEO_PID=$SERVEO_PID" >> $GITHUB_ENV
+
+        echo "Waiting for serveo tunnel to establish..."
+        sleep 8
+
+        # Extract the assigned port from serveo output
+        PORT=""
+        for i in {1..15}; do
+          echo "Attempt $i..."
+          cat serveo.log || true
+
+          # Serveo prints: Forwarding TCP connections from tcp://serveo.net:PORT
+          PORT=$(grep -o 'tcp://serveo.net:[0-9]*' serveo.log | grep -o '[0-9]*$' | head -1)
+
+          if [ ! -z "$PORT" ]; then
+            echo "✅ Tunnel ready on port $PORT"
+            break
+          fi
+
+          echo "Not ready yet, retrying in 3s..."
+          sleep 3
+        done
+
+        if [ -z "$PORT" ]; then
+          echo "❌ Could not get serveo port. Full log:"
+          cat serveo.log
+          exit 1
+        fi
+
+        echo "TUNNEL_HOST=serveo.net" >> $GITHUB_ENV
+        echo "TUNNEL_PORT=$PORT" >> $GITHUB_ENV
+
+        echo "✅ Serveo tunnel created"
+        echo "   Host: serveo.net"
+        echo "   Port: $PORT"
+
+    - name: Display Connection Info
       run: |
         echo "========================================="
-        echo "✅ NGROK SSH TUNNEL - READY FOR CONNECTION"
+        echo "✅ SSH TUNNEL - READY FOR CONNECTION"
         echo "========================================="
         echo ""
         echo "🔑 SSH Credentials:"
         echo "   Username: $SSH_USER"
         echo "   Password: $SSH_PASS"
         echo ""
-        echo "🌐 Ngrok Public Endpoint:"
-        echo "   Host: $NGROK_HOST"
-        echo "   Port: $NGROK_PORT"
-        echo "   Full URL: tcp://$NGROK_HOST:$NGROK_PORT"
+        echo "🌐 Serveo Public Endpoint:"
+        echo "   Host: $TUNNEL_HOST"
+        echo "   Port: $TUNNEL_PORT"
+        echo "   Full URL: tcp://$TUNNEL_HOST:$TUNNEL_PORT"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "📱 HTTP CUSTOM CONNECTION STRING:"
         echo ""
-        echo "$NGROK_HOST:$NGROK_PORT@$SSH_USER:$SSH_PASS"
+        echo "$TUNNEL_HOST:$TUNNEL_PORT@$SSH_USER:$SSH_PASS"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
-        echo "🔧 Alternative Connection Methods:"
-        echo ""
-        echo "Standard SSH Command:"
-        echo "ssh $SSH_USER@$NGROK_HOST -p $NGROK_PORT"
+        echo "🔧 Standard SSH Command:"
+        echo "ssh $SSH_USER@$TUNNEL_HOST -p $TUNNEL_PORT"
         echo ""
         echo "Password: $SSH_PASS"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "⏱️  Session Information:"
         echo "   Duration: ${{ github.event.inputs.duration }} minutes"
-        echo "   Expires: $(date -d '+${{ github.event.inputs.duration }} minutes' '+%Y-%m-%d %H:%M:%S UTC')"
+        echo "   Started:  $(date '+%Y-%m-%d %H:%M:%S UTC')"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
         echo "⚠️  IMPORTANT:"
@@ -157,72 +131,65 @@ jobs:
         echo "• Copy the HTTP Custom string above exactly"
         echo "• Paste it in HTTP Custom app to connect"
         echo "• Session will auto-terminate after ${{ github.event.inputs.duration }} minutes"
-        echo ""
-        echo "💡 Ngrok provides a free subdomain automatically"
-        echo "   No custom domain needed - use the host above"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        
-    - name: Test SSH Connection
+
+    - name: Test SSH Port
       run: |
         echo ""
-        echo "🔍 Testing SSH connection through ngrok..."
+        echo "🔍 Testing tunnel connectivity..."
+        timeout 5 nc -zv $TUNNEL_HOST $TUNNEL_PORT 2>&1 || echo "Note: Port test may show error but SSH should still work"
         echo ""
-        
-        # Test if port is accessible
-        timeout 5 nc -zv $NGROK_HOST $NGROK_PORT 2>&1 || echo "Note: Port test may show error, but SSH should still work"
-        
+        echo "✅ Tunnel is ready for connections"
         echo ""
-        echo "✅ SSH tunnel is ready for connections"
-        echo ""
-        
+
     - name: Start Tmate (Backup Connection)
       uses: mxschmitt/action-tmate@v3
       with:
         limit-access-to-actor: false
         detached: false
-        
+
     - name: Keep Session Alive
       run: |
         echo ""
         echo "🟢 SSH TUNNEL IS ACTIVE"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "CONNECTION STRING: $NGROK_HOST:$NGROK_PORT@$SSH_USER:$SSH_PASS"
+        echo "CONNECTION STRING: $TUNNEL_HOST:$TUNNEL_PORT@$SSH_USER:$SSH_PASS"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
         echo "Session will remain active for ${{ github.event.inputs.duration }} minutes"
-        echo "Press Ctrl+C to stop (in GitHub Actions UI)"
         echo ""
-        
-        # Keep the workflow running for the specified duration
+
         DURATION=${{ github.event.inputs.duration }}
         COUNTER=0
-        
+
         while [ $COUNTER -lt $DURATION ]; do
           sleep 60
           COUNTER=$((COUNTER + 1))
           REMAINING=$((DURATION - COUNTER))
-          
+
           # Show status every 5 minutes
           if [ $((COUNTER % 5)) -eq 0 ]; then
             echo "[$(date '+%H:%M:%S')] Session active - $REMAINING minutes remaining"
-            
-            # Show ngrok status
-            TUNNEL_INFO=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | grep -o '"public_url":"tcp://[^"]*"' | head -1)
+
+            # Check serveo tunnel is still alive
+            TUNNEL_INFO=$(grep -o 'tcp://serveo.net:[0-9]*' serveo.log | head -1 || true)
             if [ ! -z "$TUNNEL_INFO" ]; then
-              echo "   ✅ Ngrok tunnel: $(echo $TUNNEL_INFO | sed 's/"public_url":"//' | sed 's/"//')"
+              echo "   ✅ Serveo tunnel: $TUNNEL_INFO"
+            else
+              echo "   ⚠️  Serveo tunnel may have dropped"
             fi
           fi
         done
-        
+
         echo ""
         echo "🔴 Session expired after $DURATION minutes"
-        
+
     - name: Cleanup
       if: always()
       run: |
         echo "Cleaning up..."
-        if [ ! -z "$NGROK_PID" ]; then
-          kill $NGROK_PID 2>/dev/null || true
+        if [ ! -z "$SERVEO_PID" ]; then
+          kill $SERVEO_PID 2>/dev/null || true
         fi
         echo "Session ended at $(date)"
