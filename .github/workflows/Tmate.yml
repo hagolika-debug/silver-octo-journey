@@ -63,66 +63,59 @@ jobs:
         
     - name: Create SSH Tunnel with Ngrok
       run: |
-        # Start ngrok tunnel for SSH in background
-        ngrok tcp 22 --log=stdout > ngrok.log 2>&1 &
-        NGROK_PID=$!
-        echo "NGROK_PID=$NGROK_PID" >> $GITHUB_ENV
-        
-        # Wait for ngrok to start
-        echo "Waiting for ngrok to establish tunnel..."
-        sleep 10
-        
-        # Get the ngrok URL using grep and sed (without jq)
-        echo "Fetching ngrok tunnel info..."
-        
-        # Try multiple times to get the URL
-        for i in {1..20}; do
-          echo "Attempt $i..."
-          
-          # Get the API response
-          RESPONSE=$(curl -s http://localhost:4040/api/tunnels)
-          echo "API Response: $RESPONSE"
-          
-          # Extract TCP URL using grep and sed
-          NGROK_URL=$(echo "$RESPONSE" | grep -o '"public_url":"tcp://[^"]*"' | head -1 | sed 's/"public_url":"//' | sed 's/"//')
-          
-          if [ ! -z "$NGROK_URL" ]; then
-            echo "Found ngrok URL: $NGROK_URL"
-            break
-          fi
-          
-          sleep 2
-        done
-        
-        if [ -z "$NGROK_URL" ]; then
-          echo "⚠️  Could not get ngrok URL from API. Checking ngrok.log..."
-          cat ngrok.log
-          echo ""
-          echo "Trying alternative method..."
-          
-          # Alternative: try to get from log file
-          NGROK_URL=$(grep -o "tcp://[0-9a-z.-]*:[0-9]*" ngrok.log | head -1)
-          
-          if [ -z "$NGROK_URL" ]; then
-            echo "❌ Failed to get ngrok URL"
-            exit 1
-          fi
-          
-          echo "Found from log: $NGROK_URL"
-        fi
-        
-        echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
-        
-        # Extract host and port
-        HOST=$(echo $NGROK_URL | sed 's/tcp:\/\///' | cut -d':' -f1)
-        PORT=$(echo $NGROK_URL | sed 's/tcp:\/\///' | cut -d':' -f2)
-        
-        echo "NGROK_HOST=$HOST" >> $GITHUB_ENV
-        echo "NGROK_PORT=$PORT" >> $GITHUB_ENV
-        
-        echo "✅ Ngrok tunnel created"
-        echo "   Host: $HOST"
-        echo "   Port: $PORT"
+            # Start ngrok tunnel for SSH in background
+            ngrok tcp 22 --log=stdout > ngrok.log 2>&1 &
+            NGROK_PID=$!
+            echo "NGROK_PID=$NGROK_PID" >> $GITHUB_ENV
+    
+            echo "Waiting for ngrok to establish tunnel..."
+            sleep 15  # give ngrok more time to auth and connect
+    
+            # Show early log to catch auth/startup failures
+            echo "--- ngrok startup log ---"
+            cat ngrok.log || true
+            echo "-------------------------"
+    
+            echo "Fetching ngrok tunnel info..."
+            NGROK_URL=""
+    
+            for i in {1..20}; do
+              echo "Attempt $i..."
+    
+              # ✅ || true prevents curl failure from killing the step
+              RESPONSE=$(curl -s http://localhost:4040/api/tunnels || true)
+    
+              if [ ! -z "$RESPONSE" ]; then
+                echo "API Response: $RESPONSE"
+                NGROK_URL=$(echo "$RESPONSE" | grep -o '"public_url":"tcp://[^"]*"' | head -1 | sed 's/"public_url":"//' | sed 's/"//')
+              fi
+    
+              if [ ! -z "$NGROK_URL" ]; then
+                echo "Found ngrok URL: $NGROK_URL"
+                break
+              fi
+    
+              echo "Not ready yet, retrying in 3s..."
+              sleep 3
+            done
+    
+            if [ -z "$NGROK_URL" ]; then
+              echo "❌ Failed to get ngrok URL. Final ngrok log:"
+              cat ngrok.log
+              exit 1
+            fi
+    
+            echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
+    
+            HOST=$(echo $NGROK_URL | sed 's/tcp:\/\///' | cut -d':' -f1)
+            PORT=$(echo $NGROK_URL | sed 's/tcp:\/\///' | cut -d':' -f2)
+    
+            echo "NGROK_HOST=$HOST" >> $GITHUB_ENV
+            echo "NGROK_PORT=$PORT" >> $GITHUB_ENV
+    
+            echo "✅ Ngrok tunnel created"
+            echo "   Host: $HOST"
+            echo "   Port: $PORT"
         
     - name: Display HTTP Custom Connection String
       run: |
