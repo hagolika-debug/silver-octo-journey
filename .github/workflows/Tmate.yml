@@ -19,7 +19,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y tmate openssh-server
+        sudo apt-get install -y openssh-server
         sudo systemctl enable ssh
         sudo systemctl start ssh
     
@@ -35,45 +35,37 @@ jobs:
         sudo sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords no/' /etc/ssh/sshd_config
         sudo systemctl restart ssh
         
-        # Get IP address
-        IP_ADDRESS=$(curl -s ifconfig.me)
-        SSH_PORT=22
-        
         # Store credentials
-        echo "SSH_HOST=$IP_ADDRESS" >> $GITHUB_ENV
-        echo "SSH_PORT=$SSH_PORT" >> $GITHUB_ENV
         echo "SSH_USER=runner" >> $GITHUB_ENV
         echo "SSH_PASS=$PASSWORD" >> $GITHUB_ENV
         
         echo "========================================="
         echo "SSH Connection Details:"
-        echo "Host: $IP_ADDRESS"
-        echo "Port: $SSH_PORT"
         echo "User: runner"
         echo "Password: $PASSWORD"
-        echo "========================================="
-        echo ""
-        echo "HTTP Custom Format:"
-        echo "$IP_ADDRESS:$SSH_PORT@runner:$PASSWORD"
         echo "========================================="
     
     - name: Start tmate session
       uses: mxschmitt/action-tmate@v3
       with:
         limit-access-to-actor: false
-        timeout-minutes: ${{ github.event.inputs.timeout || 60 }}
+        detached: false
     
-    - name: Keep session alive
+    - name: Display connection format
+      if: always()
       run: |
-        echo "SSH session active"
-        echo "Use this format for HTTP Custom:"
-        echo "$SSH_HOST:$SSH_PORT@$SSH_USER:$SSH_PASS"
+        echo "========================================="
+        echo "📱 HTTP Custom Format:"
+        echo "Use the tmate SSH URL from above with this format:"
         echo ""
-        echo "You can also connect via:"
-        echo "ssh $SSH_USER@$SSH_HOST -p $SSH_PORT"
-        
-        # Keep the session alive until manually stopped
-        while true; do
-          sleep 60
-          echo "Session still active at $(date)"
-        done
+        echo "Format: host:port@user:pass"
+        echo ""
+        echo "Example with tmate:"
+        echo "ssh://tmate-user@tmate-host:port"
+        echo ""
+        echo "For HTTP Custom, you need:"
+        echo "tmate-host:port@runner:$SSH_PASS"
+        echo ""
+        echo "⚠️  Note: tmate uses SSH key authentication by default"
+        echo "The password setup is for local SSH access only"
+        echo "========================================="
