@@ -1,71 +1,79 @@
-name: Tmate SSH Session
+name: Public SSH Server with Password Auth
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  workflow_dispatch:
     inputs:
-      timeout:
-        description: 'Session timeout in minutes'
+      duration:
+        description: 'Session duration (minutes)'
         required: false
-        default: '60'
+        default: '120'
+      custom_password:
+        description: 'Custom password (leave blank for auto)'
+        required: false
+        type: string
 
 jobs:
-  tmate-ssh:
+  ssh-tunnel:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    
-    - name: Install dependencies
+    - name: Setup SSH Server
       run: |
+        # Install SSH server and tools
         sudo apt-get update
-        sudo apt-get install -y openssh-server
-        sudo systemctl enable ssh
-        sudo systemctl start ssh
-    
-    - name: Setup SSH with password authentication
-      run: |
-        # Set password for runner user
-        PASSWORD="runnerpass123"
-        echo "runner:$PASSWORD" | sudo chpasswd
+        sudo apt-get install -y openssh-server curl
         
-        # Configure SSH to allow password authentication
+        # Configure SSH for password auth
         sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
         sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
-        sudo sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords no/' /etc/ssh/sshd_config
-        sudo systemctl restart ssh
+        echo "PermitRootLogin yes" | sudo tee -a /etc/ssh/sshd_config
         
-        # Store credentials
+        # Set password
+        if [ -z "${{ github.event.inputs.custom_password }}" ]; then
+          PASSWORD=$(openssl rand -base64 12)
+        else
+          PASSWORD="${{ github.event.inputs.custom_password }}"
+        fi
+        
+        echo "runner:$PASSWORD" | sudo chpasswd
+        
+        # Start SSH
+        sudo systemctl enable ssh
+        sudo systemctl start ssh
+        
         echo "SSH_USER=runner" >> $GITHUB_ENV
         echo "SSH_PASS=$PASSWORD" >> $GITHUB_ENV
         
+    - name: Create SSH Tunnel (serveo.net)
+      run: |
+        # This creates a public tunnel using serveo.net
+        # No account needed - completely free
+        ssh -R 0:localhost:22 serveo.net &
+        sleep 5
+        
+        # Get the public URL
+        PUBLIC_URL=$(curl -s http://serveo.net | grep -o 'ssh -R .*' | head -1 || echo "")
+        
+        echo "PUBLIC_URL=$PUBLIC_URL" >> $GITHUB_ENV
+        
+    - name: Display Connection Info
+      run: |
         echo "========================================="
-        echo "SSH Connection Details:"
-        echo "User: runner"
-        echo "Password: $PASSWORD"
+        echo "🔐 SSH CONNECTION DETAILS"
         echo "========================================="
-    
-    - name: Start tmate session
+        echo ""
+        echo "Username: $SSH_USER"
+        echo "Password: $SSH_PASS"
+        echo ""
+        echo "📱 HTTP Custom Format:"
+        echo "serveo.net:22@$SSH_USER:$SSH_PASS"
+        echo ""
+        echo "Or if using custom subdomain:"
+        echo "your-subdomain.serveo.net:22@$SSH_USER:$SSH_PASS"
+        echo "========================================="
+        
+    - name: Start tmate (as fallback)
       uses: mxschmitt/action-tmate@v3
       with:
         limit-access-to-actor: false
         detached: false
-    
-    - name: Display connection format
-      if: always()
-      run: |
-        echo "========================================="
-        echo "📱 HTTP Custom Format:"
-        echo "Use the tmate SSH URL from above with this format:"
-        echo ""
-        echo "Format: host:port@user:pass"
-        echo ""
-        echo "Example with tmate:"
-        echo "ssh://tmate-user@tmate-host:port"
-        echo ""
-        echo "For HTTP Custom, you need:"
-        echo "tmate-host:port@runner:$SSH_PASS"
-        echo ""
-        echo "⚠️  Note: tmate uses SSH key authentication by default"
-        echo "The password setup is for local SSH access only"
-        echo "========================================="
