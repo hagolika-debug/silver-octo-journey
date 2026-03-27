@@ -1,4 +1,4 @@
-name: Ngrok SSH Tunnel for HTTP Custom
+name: SSH Tunnel for HTTP Custom
 
 on:
   workflow_dispatch:
@@ -13,63 +13,63 @@ on:
         type: string
 
 jobs:
-  ngrok-ssh:
+  ssh-tunnel:
     runs-on: ubuntu-latest
     
     steps:
     - name: Setup SSH Server
       run: |
-        # Install SSH server and tools
         sudo apt-get update
         sudo apt-get install -y openssh-server curl
-        
-        # Configure SSH for password authentication
+
+        # Enable password authentication
         sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
         sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
         sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
-        
+
         # Set password
         if [ -z "${{ github.event.inputs.custom_password }}" ]; then
           PASSWORD=$(openssl rand -base64 12 | tr -d '=+/')
         else
           PASSWORD="${{ github.event.inputs.custom_password }}"
         fi
-        
+
         echo "runner:$PASSWORD" | sudo chpasswd
-        
-        # Start SSH service
         sudo systemctl restart ssh
-        
-        # Save credentials
+
         echo "SSH_USER=runner" >> $GITHUB_ENV
         echo "SSH_PASS=$PASSWORD" >> $GITHUB_ENV
-        
+
         echo "✅ SSH Server configured"
         echo "Username: runner"
         echo "Password: $PASSWORD"
 
-    - name: Create SSH Tunnel via Serveo
+    - name: Install Bore
       run: |
-        # serveo.net — free TCP tunneling, no account needed, no install
-        ssh -o StrictHostKeyChecking=no \
-            -o ServerAliveInterval=60 \
-            -o ExitOnForwardFailure=yes \
-            -R 0:localhost:22 serveo.net \
-            > serveo.log 2>&1 &
-        SERVEO_PID=$!
-        echo "SERVEO_PID=$SERVEO_PID" >> $GITHUB_ENV
+        echo "Installing bore tunnel client..."
+        curl -L https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-unknown-linux-musl.tar.gz \
+          | tar xz
+        sudo mv bore /usr/local/bin/bore
+        bore --version
+        echo "✅ Bore installed"
 
-        echo "Waiting for serveo tunnel to establish..."
+    - name: Create TCP Tunnel via Bore
+      run: |
+        # Start bore tunnel forwarding local SSH port to bore.pub
+        bore local 22 --to bore.pub > bore.log 2>&1 &
+        BORE_PID=$!
+        echo "BORE_PID=$BORE_PID" >> $GITHUB_ENV
+
+        echo "Waiting for bore tunnel to establish..."
         sleep 8
 
-        # Extract the assigned port from serveo output
+        # bore prints: listening at bore.pub:PORT
         PORT=""
-        for i in {1..15}; do
+        for i in {1..20}; do
           echo "Attempt $i..."
-          cat serveo.log || true
+          cat bore.log || true
 
-          # Serveo prints: Forwarding TCP connections from tcp://serveo.net:PORT
-          PORT=$(grep -o 'tcp://serveo.net:[0-9]*' serveo.log | grep -o '[0-9]*$' | head -1)
+          PORT=$(grep -o 'bore.pub:[0-9]*' bore.log | grep -o '[0-9]*$' | head -1)
 
           if [ ! -z "$PORT" ]; then
             echo "✅ Tunnel ready on port $PORT"
@@ -81,16 +81,16 @@ jobs:
         done
 
         if [ -z "$PORT" ]; then
-          echo "❌ Could not get serveo port. Full log:"
-          cat serveo.log
+          echo "❌ Could not get bore port. Full log:"
+          cat bore.log
           exit 1
         fi
 
-        echo "TUNNEL_HOST=serveo.net" >> $GITHUB_ENV
+        echo "TUNNEL_HOST=bore.pub" >> $GITHUB_ENV
         echo "TUNNEL_PORT=$PORT" >> $GITHUB_ENV
 
-        echo "✅ Serveo tunnel created"
-        echo "   Host: serveo.net"
+        echo "✅ Bore tunnel created"
+        echo "   Host: bore.pub"
         echo "   Port: $PORT"
 
     - name: Display Connection Info
@@ -103,10 +103,9 @@ jobs:
         echo "   Username: $SSH_USER"
         echo "   Password: $SSH_PASS"
         echo ""
-        echo "🌐 Serveo Public Endpoint:"
+        echo "🌐 Bore Public Endpoint:"
         echo "   Host: $TUNNEL_HOST"
         echo "   Port: $TUNNEL_PORT"
-        echo "   Full URL: tcp://$TUNNEL_HOST:$TUNNEL_PORT"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "📱 HTTP CUSTOM CONNECTION STRING:"
@@ -116,9 +115,8 @@ jobs:
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
         echo "🔧 Standard SSH Command:"
-        echo "ssh $SSH_USER@$TUNNEL_HOST -p $TUNNEL_PORT"
-        echo ""
-        echo "Password: $SSH_PASS"
+        echo "   ssh $SSH_USER@$TUNNEL_HOST -p $TUNNEL_PORT"
+        echo "   Password: $SSH_PASS"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "⏱️  Session Information:"
@@ -126,21 +124,14 @@ jobs:
         echo "   Started:  $(date '+%Y-%m-%d %H:%M:%S UTC')"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
-        echo "⚠️  IMPORTANT:"
-        echo "• Keep this GitHub Actions workflow running"
-        echo "• Copy the HTTP Custom string above exactly"
-        echo "• Paste it in HTTP Custom app to connect"
-        echo "• Session will auto-terminate after ${{ github.event.inputs.duration }} minutes"
+        echo "⚠️  Keep this workflow running to maintain the tunnel"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     - name: Test SSH Port
       run: |
-        echo ""
         echo "🔍 Testing tunnel connectivity..."
-        timeout 5 nc -zv $TUNNEL_HOST $TUNNEL_PORT 2>&1 || echo "Note: Port test may show error but SSH should still work"
-        echo ""
-        echo "✅ Tunnel is ready for connections"
-        echo ""
+        timeout 5 nc -zv $TUNNEL_HOST $TUNNEL_PORT 2>&1 || echo "Note: nc test may fail but SSH should still work"
+        echo "✅ Tunnel is ready"
 
     - name: Start Tmate (Backup Connection)
       uses: mxschmitt/action-tmate@v3
@@ -152,12 +143,10 @@ jobs:
       run: |
         echo ""
         echo "🟢 SSH TUNNEL IS ACTIVE"
-        echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "CONNECTION STRING: $TUNNEL_HOST:$TUNNEL_PORT@$SSH_USER:$SSH_PASS"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "Session will remain active for ${{ github.event.inputs.duration }} minutes"
+        echo "Session active for ${{ github.event.inputs.duration }} minutes"
         echo ""
 
         DURATION=${{ github.event.inputs.duration }}
@@ -168,28 +157,26 @@ jobs:
           COUNTER=$((COUNTER + 1))
           REMAINING=$((DURATION - COUNTER))
 
-          # Show status every 5 minutes
           if [ $((COUNTER % 5)) -eq 0 ]; then
             echo "[$(date '+%H:%M:%S')] Session active - $REMAINING minutes remaining"
 
-            # Check serveo tunnel is still alive
-            TUNNEL_INFO=$(grep -o 'tcp://serveo.net:[0-9]*' serveo.log | head -1 || true)
-            if [ ! -z "$TUNNEL_INFO" ]; then
-              echo "   ✅ Serveo tunnel: $TUNNEL_INFO"
+            # Check bore process is still running
+            if kill -0 $BORE_PID 2>/dev/null; then
+              echo "   ✅ Bore tunnel process alive (PID $BORE_PID)"
             else
-              echo "   ⚠️  Serveo tunnel may have dropped"
+              echo "   ⚠️  Bore process died — attempting restart..."
+              bore local 22 --to bore.pub >> bore.log 2>&1 &
+              BORE_PID=$!
+              echo "   🔄 Restarted bore (PID $BORE_PID)"
             fi
           fi
         done
 
-        echo ""
         echo "🔴 Session expired after $DURATION minutes"
 
     - name: Cleanup
       if: always()
       run: |
         echo "Cleaning up..."
-        if [ ! -z "$SERVEO_PID" ]; then
-          kill $SERVEO_PID 2>/dev/null || true
-        fi
+        kill $BORE_PID 2>/dev/null || true
         echo "Session ended at $(date)"
